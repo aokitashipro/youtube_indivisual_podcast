@@ -99,13 +99,54 @@ class PodcastPipeline:
         try:
             self.logger.info("📦 モジュールを初期化しています...")
 
-            self.sheets_manager = SheetsManager(self.settings)
+            # Claude Client（必須: ステップ3-4で使用）
             self.claude_client = ClaudeClient(self.settings)
-            self.audio_generator = AudioGenerator(self.settings)
-            self.video_generator = VideoGenerator(self.settings)
-            self.metadata_generator = MetadataGenerator(self.settings)
-            self.storage_manager = StorageManager(self.settings)
-            self.notifier = Notifier(self.settings)
+            self.logger.info("  ✅ Claude Client初期化完了")
+            
+            # 以下はオプション（必要に応じて初期化）
+            try:
+                if self.settings.GOOGLE_SHEETS_ID:
+                    self.sheets_manager = SheetsManager(self.settings)
+                    self.logger.info("  ✅ Sheets Manager初期化完了")
+            except Exception as e:
+                self.logger.warning(f"  ⚠️ Sheets Manager初期化スキップ: {e}")
+                self.sheets_manager = None
+            
+            try:
+                self.audio_generator = AudioGenerator(self.settings)
+                self.logger.info("  ✅ Audio Generator初期化完了")
+            except Exception as e:
+                self.logger.warning(f"  ⚠️ Audio Generator初期化スキップ: {e}")
+                self.audio_generator = None
+            
+            try:
+                self.video_generator = VideoGenerator(self.settings)
+                self.logger.info("  ✅ Video Generator初期化完了")
+            except Exception as e:
+                self.logger.warning(f"  ⚠️ Video Generator初期化スキップ: {e}")
+                self.video_generator = None
+            
+            try:
+                self.metadata_generator = MetadataGenerator(self.settings)
+                self.logger.info("  ✅ Metadata Generator初期化完了")
+            except Exception as e:
+                self.logger.warning(f"  ⚠️ Metadata Generator初期化スキップ: {e}")
+                self.metadata_generator = None
+            
+            try:
+                if self.settings.GOOGLE_SHEETS_ID:
+                    self.storage_manager = StorageManager(self.settings)
+                    self.logger.info("  ✅ Storage Manager初期化完了")
+            except Exception as e:
+                self.logger.warning(f"  ⚠️ Storage Manager初期化スキップ: {e}")
+                self.storage_manager = None
+            
+            try:
+                self.notifier = Notifier(self.settings)
+                self.logger.info("  ✅ Notifier初期化完了")
+            except Exception as e:
+                self.logger.warning(f"  ⚠️ Notifier初期化スキップ: {e}")
+                self.notifier = None
 
             self.logger.info("✅ モジュールの初期化が完了しました")
 
@@ -123,10 +164,12 @@ class PodcastPipeline:
             try:
                 self._initialize_modules()
 
-                await self.notifier.send_custom_notification(
-                    "🎬 YouTube AIポッドキャスト生成を開始します\n"
-                    f"開始時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                )
+                # Slack通知（設定されている場合のみ）
+                if self.notifier:
+                    await self.notifier.send_custom_notification(
+                        "🎬 YouTube AIポッドキャスト生成を開始します\n"
+                        f"開始時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
 
                 self.results["start_time"] = datetime.now()
                 self.logger.info("✅ ステップ1: 初期化が完了しました")
@@ -172,10 +215,12 @@ class PodcastPipeline:
 
                 self.results["topics_data"] = topics_data
 
-                await self.sheets_manager.update_row(
-                    self.results["sheet_row_id"],
-                    {"進捗": "台本生成待ち", "トピック数": len(topics_data.get("topics", []))}
-                )
+                # Sheets更新はオプション（Sheetsを使わない場合はスキップ）
+                if self.sheets_manager and self.results.get("sheet_row_id"):
+                    await self.sheets_manager.update_row(
+                        self.results["sheet_row_id"],
+                        {"進捗": "台本生成待ち", "トピック数": len(topics_data.get("topics", []))}
+                    )
 
                 self.logger.info(
                     f"✅ ステップ3: 情報収集が完了しました ({len(topics_data.get('topics', []))}件のトピック)"
@@ -184,6 +229,36 @@ class PodcastPipeline:
             except Exception as e:
                 self.error_handler.handle_api_error(e, "Claude API (情報収集)")
                 raise Exception(f"情報収集に失敗しました: {e}")
+    
+    async def step_04_generate_script(self):
+        """ステップ4: Claude APIで台本生成"""
+        with timer_context("Step 4: 台本生成 (目標: 2-3分)", self.logger):
+            self.logger.info("=" * 80)
+            self.logger.info("📝 ステップ4: Claude APIで台本を生成します")
+            self.logger.info("=" * 80)
+
+            try:
+                script_content = await self.retry_handler.retry_async(
+                    self.claude_client.generate_dialogue_script,
+                    self.results["topics_data"]
+                )
+
+                self.results["script_content"] = script_content
+
+                # Sheets更新はオプション
+                if self.sheets_manager and self.results.get("sheet_row_id"):
+                    await self.sheets_manager.update_row(
+                        self.results["sheet_row_id"],
+                        {"進捗": "音声生成待ち", "台本文字数": len(script_content.get("full_script", ""))}
+                    )
+
+                self.logger.info(
+                    f"✅ ステップ4: 台本生成が完了しました ({len(script_content.get('full_script', ''))}文字)"
+                )
+
+            except Exception as e:
+                self.error_handler.handle_api_error(e, "Claude API (台本生成)")
+                raise Exception(f"台本生成に失敗しました: {e}")
 
     async def run(self) -> Dict[str, Any]:
         """パイプライン全体を実行"""
@@ -196,9 +271,10 @@ class PodcastPipeline:
         try:
             # 各ステップを順次実行
             await self.step_01_initialize()
-            await self.step_02_create_sheet_row()
+            # ステップ2はGoogle Sheets使用時のみ（オプション）
+            # await self.step_02_create_sheet_row()
             await self.step_03_collect_information()
-            # 他のステップも同様に実装...
+            await self.step_04_generate_script()
 
             self.total_timer.stop()
 

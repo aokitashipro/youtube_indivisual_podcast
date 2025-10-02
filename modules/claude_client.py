@@ -3,9 +3,12 @@ Claude API呼び出しモジュール
 """
 import anthropic
 import yaml
-from typing import Dict, Any
+import json
+import asyncio
+from typing import Dict, Any, List
 import logging
 from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,45 @@ class ClaudeClient:
         except Exception as e:
             logger.error(f"プロンプトテンプレートの読み込みに失敗しました: {e}")
             return {}
+    
+    def _get_mock_topics(self) -> Dict[str, Any]:
+        """モックデータを返す（実際のAPI統合までの暫定対応）"""
+        return {
+            "topics": [
+                {
+                    "title_ja": "AI駆動の個人開発ツールが月収10万ドルを達成",
+                    "title_en": "AI-Powered Solo Dev Tool Hits $100K MRR",
+                    "summary": "1人の開発者が作ったAIコード補完ツールが、わずか8ヶ月で月間収益10万ドルを達成。ニッチな市場を見つけ、コミュニティとの対話を重視した成長戦略が功を奏した。初期投資はほぼゼロで、マーケティングもSNSとコミュニティ活動のみ。",
+                    "url": "https://www.indiehackers.com/post/ai-tool-100k-mrr-example",
+                    "category": "個人開発/AI",
+                    "interesting_points": "このツールの成功要因は3つ。第一に、大手企業が見落としていた特定の開発者層（フリーランスのフロントエンド開発者）にフォーカスしたこと。第二に、無料プランを充実させてコミュニティを先に作り、その後有料化したこと。第三に、ユーザーフィードバックを48時間以内に実装する超高速開発サイクル。価格設定も月額49ドルと絶妙で、個人でも手が出せる範囲。競合のCopilotが月額10ドルなのに対し、より専門特化した機能で価格差を正当化している。",
+                    "source": "Indie Hackers",
+                    "posted_at": "2025-10-01"
+                },
+                {
+                    "title_ja": "ノーコードで構築されたSaaSが1年でエグジット",
+                    "title_en": "No-Code SaaS Exits After 1 Year",
+                    "summary": "Bubble.ioとAirtableだけで構築されたプロジェクト管理ツールが、立ち上げから1年で大手企業に買収された。開発コストは月額200ドル以下、創業者はコードを一行も書いていない。",
+                    "url": "https://www.producthunt.com/posts/no-code-saas-exit",
+                    "category": "MicroSaaS/ノーコード",
+                    "interesting_points": "この事例が示すのは「技術力がすべてではない」という事実。創業者は元マーケターで、コーディング経験ゼロ。しかし、実際のユーザーの痛みを深く理解しており、既存ツールの組み合わせだけで解決策を提供できた。特筆すべきは、MVPを2週間で作り、3ヶ月で最初の有料顧客を獲得したスピード感。Bubble.ioのテンプレートをベースに、必要最小限の機能だけを実装。「完璧を待つな、出荷せよ」を体現した成功例。買収額は非公開だが、年間収益の5-7倍程度と推測されている。",
+                    "source": "Product Hunt",
+                    "posted_at": "2025-09-30"
+                },
+                {
+                    "title_ja": "オープンソースのAI音声クローンツールが爆発的人気",
+                    "title_en": "Open Source AI Voice Cloning Tool Goes Viral",
+                    "summary": "GitHub上で公開された音声クローニングツールが、公開3日で1万スター獲得。商用利用も可能なMITライセンスで、数秒の音声サンプルから高品質な音声合成が可能。個人開発者による週末プロジェクトとして始まった。",
+                    "url": "https://news.ycombinator.com/item?id=12345678",
+                    "category": "AI/オープンソース",
+                    "interesting_points": "このツールが注目される理由は、技術的な革新性だけでなく、倫理面への配慮。音声の透かし（watermark）機能を標準搭載し、生成された音声がAIによるものだと識別できるようにしている。また、悪用防止のため、使用には同意確認が必須。開発者はボイスアクター出身で、「技術の民主化と倫理のバランス」を重視。ElevenLabsなどの商用サービスが月額数十ドルするのに対し、ローカルで動作するため完全無料。ただし、GPUが必要で、M1 Mac以上を推奨。すでに数十のフォークが生まれ、エコシステムが形成されつつある。",
+                    "source": "Hacker News",
+                    "posted_at": "2025-10-02"
+                }
+            ],
+            "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "total_count": 3
+        }
     
     async def generate_content(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """メインコンテンツを生成"""
@@ -203,3 +245,410 @@ class ClaudeClient:
         except Exception as e:
             logger.error(f"メタデータの解析に失敗しました: {e}")
             return {"raw_metadata": content}
+    
+    async def collect_topics_with_web_search(self, use_history: bool = True, use_mock_data: bool = True) -> Dict[str, Any]:
+        """
+        情報収集（外部APIまたはモックデータを使用）
+        
+        Args:
+            use_history: 過去の履歴と照合して重複を除外するか（デフォルト: True）
+            use_mock_data: モックデータを使用するか（デフォルト: True、実装中）
+        
+        情報源:
+            - Indie Hackers (https://www.indiehackers.com/)
+            - Product Hunt (https://www.producthunt.com/)
+            - Hacker News Show HN (https://news.ycombinator.com/show)
+        
+        Returns:
+            Dict[str, Any]: 収集したトピックデータ（重複除外済み）
+        """
+        try:
+            # トピック履歴を初期化
+            if use_history:
+                from modules.topic_history import TopicHistory
+                history = TopicHistory()
+                history_count = history.get_history_count()
+                logger.info(f"📚 トピック履歴: {history_count}件の過去トピックを確認")
+            
+            # モックデータを使用（実際のAPI統合までの暫定対応）
+            if use_mock_data:
+                logger.info("🔍 モックデータで情報収集を開始します（実際のAPI統合は未実装）")
+                topics_data = self._get_mock_topics()
+                logger.info(f"📥 モックデータ取得完了: {len(topics_data.get('topics', []))}件のトピック")
+            else:
+                logger.info("🔍 Claude APIで情報収集を開始します（注意: リアルタイムWeb検索機能は存在しません）")
+                logger.warning("⚠️ Claude APIはリアルタイムWeb検索ができません。空のデータが返される可能性があります。")
+                
+                prompt = """
+あなたは海外の個人開発・AI関連ニュースを収集する専門家です。
+
+**重要**: 必ず**最新・新着順**のトピックを優先して収集してください。数日前や1週間前の古い情報ではなく、**直近24-48時間以内**に投稿されたものを選んでください。
+
+以下の情報源から、最新の興味深いトピックを**5件**収集してください：
+
+1. **Indie Hackers** (https://www.indiehackers.com/)
+   - 個人開発者の成功事例
+   - MicroSaaSのトレンド
+   - 収益化の実例
+   
+2. **Product Hunt** (https://www.producthunt.com/)
+   - 新規AIツール・プロダクト（特に本日・昨日ローンチ）
+   - 注目のスタートアップ
+   - 革新的なサービス
+   
+3. **Hacker News Show HN** (https://news.ycombinator.com/show)
+   - 技術的に興味深いプロジェクト
+   - オープンソースの新規プロジェクト
+   - 個人開発のツール
+
+**収集基準**:
+- 投稿日時が新しいもの（24-48時間以内を優先）
+- 具体的なプロダクト・サービス・技術がある
+- 個人開発者や小規模チームが参考になる
+- ビジネスモデルや技術的に興味深い
+
+各トピックについて以下の情報を含めてください：
+- タイトル（日本語訳）
+- 元のタイトル（英語）
+- 概要（200-300文字程度、日本語で詳しく）
+- URL（必須: 重複チェックに使用）
+- カテゴリ（個人開発/AI/MicroSaaS/技術/オープンソース/その他）
+- 興味深いポイント（なぜこれが注目すべきか、300文字程度）
+- 投稿日時（可能な限り正確に）
+
+**必ずJSONフォーマットで返してください。**
+
+フォーマット例:
+{
+  "topics": [
+    {
+      "title_ja": "日本語タイトル",
+      "title_en": "English Title",
+      "summary": "概要...",
+      "url": "https://...",
+      "category": "AI",
+      "interesting_points": "注目ポイント...",
+      "source": "Product Hunt"
+    }
+  ],
+  "collected_at": "2024-10-02 14:00:00",
+  "total_count": 3
+}
+"""
+                
+                response = self.client.messages.create(
+                    model="claude-sonnet-4-5-20250929",
+                    max_tokens=4000,
+                    temperature=0.7,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ]
+                )
+                
+                # レスポンスを解析
+                content = response.content[0].text
+                topics_data = self._parse_topics_response(content)
+                
+                logger.info(f"📥 情報収集完了: {len(topics_data.get('topics', []))}件のトピック")
+            
+            # 重複チェック
+            if use_history:
+                original_count = len(topics_data.get('topics', []))
+                filtered_topics = history.filter_duplicates(topics_data.get('topics', []))
+                topics_data['topics'] = filtered_topics
+                
+                # 新しいトピックを履歴に追加
+                if filtered_topics:
+                    history.add_topics(filtered_topics)
+                    logger.info(f"✅ 新規トピック: {len(filtered_topics)}件（{original_count - len(filtered_topics)}件は重複除外）")
+                else:
+                    logger.warning("⚠️ 全てのトピックが重複していました。再収集を推奨します。")
+            else:
+                logger.info(f"✅ 情報収集完了: {len(topics_data.get('topics', []))}件のトピック")
+            
+            return topics_data
+            
+        except Exception as e:
+            logger.error(f"❌ 情報収集に失敗しました: {e}")
+            raise
+    
+    def _parse_topics_response(self, content: str) -> Dict[str, Any]:
+        """Claudeのレスポンスからトピックデータを解析"""
+        try:
+            # JSONブロックを抽出
+            import re
+            
+            # ```json ... ``` または { ... } を探す
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # { ... } を直接探す
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    raise ValueError("JSON形式のデータが見つかりません")
+            
+            # JSONをパース
+            topics_data = json.loads(json_str)
+            
+            # デフォルト値を設定
+            if "collected_at" not in topics_data:
+                topics_data["collected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            if "total_count" not in topics_data:
+                topics_data["total_count"] = len(topics_data.get("topics", []))
+            
+            logger.info(f"トピックデータを解析しました: {topics_data['total_count']}件")
+            return topics_data
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析エラー: {e}")
+            # フォールバック: テキストをそのまま返す
+            return {
+                "topics": [{"title_ja": "解析エラー", "summary": content[:500]}],
+                "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "total_count": 1,
+                "raw_content": content
+            }
+        except Exception as e:
+            logger.error(f"トピックデータ解析エラー: {e}")
+            raise
+    
+    async def generate_dialogue_script(self, topics_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        対談形式の台本を生成
+        
+        Args:
+            topics_data: collect_topics_with_web_search()で収集したトピックデータ
+            
+        Returns:
+            Dict[str, Any]: 生成された台本
+        """
+        try:
+            logger.info("📝 Claude APIで対談形式の台本を生成します")
+            
+            # トピックをフォーマット
+            topics_text = self._format_topics_for_script(topics_data)
+            
+            # トピックから最も興味深いものを1つ選択
+            topics = topics_data.get("topics", [])
+            if not topics:
+                raise ValueError("トピックが見つかりません")
+            
+            # 最初のトピックを選択（後で改善：選択ロジックを追加）
+            selected_topic = topics[0]
+            
+            prompt = f"""
+あなたはYouTubeポッドキャスト番組の台本作家です。
+海外のテック・個人開発・AI関連ニュースを紹介する番組で、以下の1つのトピックについて深く掘り下げた対談形式の台本を生成してください。
+
+# 今回のトピック
+## {selected_topic.get('title_ja', 'N/A')}
+
+- **元タイトル**: {selected_topic.get('title_en', 'N/A')}
+- **カテゴリ**: {selected_topic.get('category', 'N/A')}
+- **出典**: {selected_topic.get('source', 'N/A')} - {selected_topic.get('url', 'N/A')}
+- **概要**: {selected_topic.get('summary', 'N/A')}
+- **注目ポイント**: {selected_topic.get('interesting_points', 'N/A')}
+
+# キャラクター設定
+- **Aさん（楽観派・興味津々役）**: 新しい技術やアイデアに興奮する。「これ面白い！」「可能性がある！」と前のめり。実装方法や応用例を考えるのが好き。
+- **Bさん（懐疑派・現実派）**: 冷静で批判的。「本当にうまくいくの？」「ビジネスとして成立する？」と疑問を投げかける。実用性や収益性を重視。
+
+# 台本構成（15-20分、約5000-7000文字）
+
+## 1. オープニング (1-2分、約400-600文字)
+- 軽い挨拶と番組紹介
+- 今日のテーマの魅力的な導入
+- リスナーの興味を引く問いかけ
+
+## 2. 基本情報の紹介 (2-3分、約700-1000文字)
+- トピックの背景・概要を説明
+- AさんとBさんの第一印象
+- 出典を自然に言及
+
+## 3. 深掘り議論 パート1 - 技術・アイデアの詳細 (4-5分、約1400-1700文字)
+- 技術的な仕組みや実装方法
+- 既存ソリューションとの違い
+- Aさんの興奮とBさんのツッコミ
+- 具体例を交えた議論
+
+## 4. 深掘り議論 パート2 - ビジネス・実用性 (4-5分、約1400-1700文字)
+- ビジネスモデルや収益化の可能性
+- ターゲット市場の分析
+- 実際に使えるか？売れるか？
+- 競合や障壁についての議論
+
+## 5. 深掘り議論 パート3 - リスナーへの示唆 (3-4分、約1000-1400文字)
+- 個人開発者や起業家への学び
+- 真似できるポイント、注意すべきポイント
+- 今後のトレンド予測
+- 両者の意見の収束と新たな視点
+
+## 6. クロージング (1-2分、約400-600文字)
+- 議論のまとめ
+- リスナーへのメッセージ
+- 次回予告的な締め
+
+# 重要な要件
+1. **会話の流れを重視**: 各セクションが自然につながること。前の話を受けて次の話に展開する。
+2. **深い議論**: 表面的な紹介ではなく、技術、ビジネス、実用性を多角的に議論。
+3. **具体例を豊富に**: 「例えば〜」「実際に〜」など、イメージしやすい例を入れる。
+4. **自然な掛け合い**: 
+   - Aさんが興奮して語る → Bさんが冷静にツッコむ
+   - Bさんの疑問 → Aさんが前向きに答える
+   - お互いの意見に反応し合う
+5. **話者を必ず明記**: [Aさん] [Bさん]
+6. **適度な間や相槌**: 「なるほど」「確かに」「面白いですね」など
+7. **リスナーへの語りかけ**: 「みなさんはどう思いますか？」など
+
+# 出力フォーマット
+以下のJSON形式で出力してください：
+
+```json
+{{
+  "title": "エピソードタイトル（70文字以内、SEO最適化）",
+  "episode_number": 1,
+  "full_script": "[Aさん] こんにちは！...\n\n[Bさん] はい、...\n\n[Aさん] ...",
+  "sections": [
+    {{
+      "section_name": "オープニング",
+      "content": "[Aさん] ...",
+      "estimated_duration_seconds": 90
+    }},
+    {{
+      "section_name": "基本情報の紹介",
+      "content": "[Aさん] ...",
+      "estimated_duration_seconds": 180
+    }},
+    {{
+      "section_name": "深掘り議論 パート1 - 技術・アイデアの詳細",
+      "content": "[Aさん] ...",
+      "estimated_duration_seconds": 300
+    }},
+    {{
+      "section_name": "深掘り議論 パート2 - ビジネス・実用性",
+      "content": "[Aさん] ...",
+      "estimated_duration_seconds": 300
+    }},
+    {{
+      "section_name": "深掘り議論 パート3 - リスナーへの示唆",
+      "content": "[Aさん] ...",
+      "estimated_duration_seconds": 240
+    }},
+    {{
+      "section_name": "クロージング",
+      "content": "[Aさん] ...",
+      "estimated_duration_seconds": 90
+    }}
+  ],
+  "estimated_duration_seconds": 1200,
+  "word_count": 6000,
+  "topics_covered": ["{selected_topic.get('title_ja', '')}"]
+}}
+```
+
+必ず1つのトピックに集中し、深く掘り下げた対談を生成してください。
+"""
+            
+            response = self.client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=8000,
+                temperature=0.7,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            # レスポンスを解析
+            content = response.content[0].text
+            script_data = self._parse_script_response(content)
+            
+            logger.info(f"✅ 台本生成完了: {script_data.get('word_count', 0)}文字、"
+                       f"{script_data.get('estimated_duration_seconds', 0)}秒相当")
+            
+            return script_data
+            
+        except Exception as e:
+            logger.error(f"❌ 台本生成に失敗しました: {e}")
+            raise
+    
+    def _format_topics_for_script(self, topics_data: Dict[str, Any]) -> str:
+        """トピックを台本生成用にフォーマット"""
+        topics = topics_data.get("topics", [])
+        
+        formatted = []
+        for i, topic in enumerate(topics, 1):
+            topic_text = f"""
+## トピック{i}: {topic.get('title_ja', topic.get('title_en', 'No Title'))}
+
+- 元タイトル: {topic.get('title_en', 'N/A')}
+- カテゴリ: {topic.get('category', 'N/A')}
+- 出典: {topic.get('source', 'N/A')}
+- URL: {topic.get('url', 'N/A')}
+- 概要: {topic.get('summary', 'N/A')}
+- 興味深いポイント: {topic.get('interesting_points', 'N/A')}
+"""
+            formatted.append(topic_text)
+        
+        return "\n".join(formatted)
+    
+    def _parse_script_response(self, content: str) -> Dict[str, Any]:
+        """Claudeのレスポンスから台本データを解析"""
+        try:
+            import re
+            
+            # JSONブロックを抽出
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+                script_data = json.loads(json_str)
+            else:
+                # { ... } を直接探す
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    script_data = json.loads(json_str)
+                else:
+                    # JSONが見つからない場合はテキスト全体を台本として扱う
+                    logger.warning("JSON形式が見つからないため、テキスト全体を台本として使用します")
+                    script_data = {
+                        "title": "AI生成ポッドキャスト",
+                        "full_script": content,
+                        "sections": [],
+                        "estimated_duration_seconds": len(content) * 0.3,  # 1文字0.3秒
+                        "word_count": len(content)
+                    }
+            
+            # デフォルト値を設定
+            if "word_count" not in script_data and "full_script" in script_data:
+                script_data["word_count"] = len(script_data["full_script"])
+            
+            if "estimated_duration_seconds" not in script_data:
+                script_data["estimated_duration_seconds"] = script_data.get("word_count", 0) * 0.3
+            
+            logger.info(f"台本データを解析しました: {script_data.get('word_count', 0)}文字")
+            return script_data
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析エラー: {e}")
+            # フォールバック
+            return {
+                "title": "AI生成ポッドキャスト",
+                "full_script": content,
+                "sections": [],
+                "estimated_duration_seconds": len(content) * 0.3,
+                "word_count": len(content),
+                "raw_content": content
+            }
+        except Exception as e:
+            logger.error(f"台本データ解析エラー: {e}")
+            raise

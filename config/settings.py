@@ -3,24 +3,25 @@
 """
 import os
 from typing import Optional
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     """アプリケーション設定クラス"""
     
-    # Claude API設定
+    # Claude API設定（必須）
     ANTHROPIC_API_KEY: str = Field(..., env="ANTHROPIC_API_KEY")
     
-    # Google Sheets設定
-    GOOGLE_SHEETS_ID: str = Field(..., env="GOOGLE_SHEETS_ID")
+    # Google Sheets設定（オプション: ステップ2, 11で使用）
+    GOOGLE_SHEETS_ID: Optional[str] = Field(default=None, env="GOOGLE_SHEETS_ID")
     GOOGLE_CREDENTIALS_PATH: str = Field(
         default="assets/credentials/google-credentials.json",
         env="GOOGLE_CREDENTIALS_PATH"
     )
     
-    # OpenAI設定（音声生成用）
-    OPENAI_API_KEY: str = Field(..., env="OPENAI_API_KEY")
+    # OpenAI設定（オプション: 音声生成で使用しない）
+    OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     
     # Slack通知設定
     SLACK_BOT_TOKEN: Optional[str] = Field(default=None, env="SLACK_BOT_TOKEN")
