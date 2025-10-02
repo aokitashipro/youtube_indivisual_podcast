@@ -246,7 +246,7 @@ class ClaudeClient:
             logger.error(f"メタデータの解析に失敗しました: {e}")
             return {"raw_metadata": content}
     
-    async def collect_topics_with_web_search(self, use_history: bool = True, use_mock_data: bool = True) -> Dict[str, Any]:
+    def collect_topics_with_web_search(self, use_history: bool = True, use_mock_data: bool = True) -> Dict[str, Any]:
         """
         情報収集（外部APIまたはモックデータを使用）
         
@@ -354,8 +354,8 @@ class ClaudeClient:
                 
                 logger.info(f"📥 情報収集完了: {len(topics_data.get('topics', []))}件のトピック")
             
-            # 重複チェック
-            if use_history:
+            # 重複チェック（モックデータの場合はスキップ）
+            if use_history and not use_mock_data:
                 original_count = len(topics_data.get('topics', []))
                 filtered_topics = history.filter_duplicates(topics_data.get('topics', []))
                 topics_data['topics'] = filtered_topics
@@ -367,7 +367,10 @@ class ClaudeClient:
                 else:
                     logger.warning("⚠️ 全てのトピックが重複していました。再収集を推奨します。")
             else:
-                logger.info(f"✅ 情報収集完了: {len(topics_data.get('topics', []))}件のトピック")
+                if use_mock_data:
+                    logger.info(f"✅ モックデータ使用: {len(topics_data.get('topics', []))}件のトピック")
+                else:
+                    logger.info(f"✅ 情報収集完了: {len(topics_data.get('topics', []))}件のトピック")
             
             return topics_data
             
@@ -419,7 +422,7 @@ class ClaudeClient:
             logger.error(f"トピックデータ解析エラー: {e}")
             raise
     
-    async def generate_dialogue_script(self, topics_data: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_dialogue_script(self, topics_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         対談形式の台本を生成
         
@@ -460,52 +463,49 @@ class ClaudeClient:
 - **Aさん（楽観派・興味津々役）**: 新しい技術やアイデアに興奮する。「これ面白い！」「可能性がある！」と前のめり。実装方法や応用例を考えるのが好き。
 - **Bさん（懐疑派・現実派）**: 冷静で批判的。「本当にうまくいくの？」「ビジネスとして成立する？」と疑問を投げかける。実用性や収益性を重視。
 
-# 台本構成（15-20分、約5000-7000文字）
+# 台本構成（15-18分、約4000-5000文字）
 
-## 1. オープニング (1-2分、約400-600文字)
+## 1. オープニング (1分、約300-400文字)
 - 軽い挨拶と番組紹介
 - 今日のテーマの魅力的な導入
 - リスナーの興味を引く問いかけ
 
-## 2. 基本情報の紹介 (2-3分、約700-1000文字)
+## 2. 基本情報の紹介 (2分、約500-600文字)
 - トピックの背景・概要を説明
 - AさんとBさんの第一印象
 - 出典を自然に言及
 
-## 3. 深掘り議論 パート1 - 技術・アイデアの詳細 (4-5分、約1400-1700文字)
+## 3. 深掘り議論 パート1 - 技術・アイデアの詳細 (5-6分、約1200-1400文字)
 - 技術的な仕組みや実装方法
 - 既存ソリューションとの違い
 - Aさんの興奮とBさんのツッコミ
 - 具体例を交えた議論
 
-## 4. 深掘り議論 パート2 - ビジネス・実用性 (4-5分、約1400-1700文字)
+## 4. 深掘り議論 パート2 - ビジネス・実用性 (5-6分、約1200-1400文字)
 - ビジネスモデルや収益化の可能性
 - ターゲット市場の分析
 - 実際に使えるか？売れるか？
 - 競合や障壁についての議論
 
-## 5. 深掘り議論 パート3 - リスナーへの示唆 (3-4分、約1000-1400文字)
+## 5. リスナーへの示唆とまとめ (3分、約800-1000文字)
 - 個人開発者や起業家への学び
 - 真似できるポイント、注意すべきポイント
-- 今後のトレンド予測
-- 両者の意見の収束と新たな視点
-
-## 6. クロージング (1-2分、約400-600文字)
-- 議論のまとめ
-- リスナーへのメッセージ
-- 次回予告的な締め
+- 議論のまとめとリスナーへのメッセージ
 
 # 重要な要件
-1. **会話の流れを重視**: 各セクションが自然につながること。前の話を受けて次の話に展開する。
-2. **深い議論**: 表面的な紹介ではなく、技術、ビジネス、実用性を多角的に議論。
-3. **具体例を豊富に**: 「例えば〜」「実際に〜」など、イメージしやすい例を入れる。
-4. **自然な掛け合い**: 
+1. **厳格な文字数制限**: 全体で4000-5000文字以内（約15-18分の音声）
+2. **セクション別文字数制限を厳守**: 各セクションの文字数を必ず守る
+3. **会話の流れを重視**: 各セクションが自然につながること。前の話を受けて次の話に展開する。
+4. **簡潔で的確な議論**: 冗長な表現を避け、要点を絞った深い議論。
+5. **自然な掛け合い**: 
    - Aさんが興奮して語る → Bさんが冷静にツッコむ
    - Bさんの疑問 → Aさんが前向きに答える
    - お互いの意見に反応し合う
-5. **話者を必ず明記**: [Aさん] [Bさん]
-6. **適度な間や相槌**: 「なるほど」「確かに」「面白いですね」など
-7. **リスナーへの語りかけ**: 「みなさんはどう思いますか？」など
+6. **話者を必ず明記**: [Aさん] [Bさん]
+7. **適度な間や相槌**: 「なるほど」「確かに」「面白いですね」など
+8. **リスナーへの語りかけ**: 「みなさんはどう思いますか？」など
+
+**文字数チェック**: 生成後、必ず文字数をカウントし、5000文字を超える場合は内容を簡潔にまとめ直してください。
 
 # 出力フォーマット
 以下のJSON形式で出力してください：
@@ -519,41 +519,47 @@ class ClaudeClient:
     {{
       "section_name": "オープニング",
       "content": "[Aさん] ...",
-      "estimated_duration_seconds": 90
+      "estimated_duration_seconds": 60,
+      "word_count": 350
     }},
     {{
       "section_name": "基本情報の紹介",
       "content": "[Aさん] ...",
-      "estimated_duration_seconds": 180
+      "estimated_duration_seconds": 120,
+      "word_count": 550
     }},
     {{
       "section_name": "深掘り議論 パート1 - 技術・アイデアの詳細",
       "content": "[Aさん] ...",
-      "estimated_duration_seconds": 300
+      "estimated_duration_seconds": 360,
+      "word_count": 1300
     }},
     {{
       "section_name": "深掘り議論 パート2 - ビジネス・実用性",
       "content": "[Aさん] ...",
-      "estimated_duration_seconds": 300
+      "estimated_duration_seconds": 360,
+      "word_count": 1300
     }},
     {{
-      "section_name": "深掘り議論 パート3 - リスナーへの示唆",
+      "section_name": "リスナーへの示唆とまとめ",
       "content": "[Aさん] ...",
-      "estimated_duration_seconds": 240
-    }},
-    {{
-      "section_name": "クロージング",
-      "content": "[Aさん] ...",
-      "estimated_duration_seconds": 90
+      "estimated_duration_seconds": 180,
+      "word_count": 900
     }}
   ],
-  "estimated_duration_seconds": 1200,
-  "word_count": 6000,
+  "estimated_duration_seconds": 1080,
+  "word_count": 4500,
   "topics_covered": ["{selected_topic.get('title_ja', '')}"]
 }}
 ```
 
 必ず1つのトピックに集中し、深く掘り下げた対談を生成してください。
+
+**⚠️ 重要: 文字数制限の厳守**
+- 全体の文字数: 4000-5000文字以内
+- 各セクションの文字数制限を必ず守る
+- 冗長な表現は避け、簡潔で的確な内容にする
+- 生成後、必ず文字数をカウントして確認する
 """
             
             response = self.client.messages.create(

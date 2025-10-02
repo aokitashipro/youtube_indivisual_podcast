@@ -59,9 +59,7 @@ async def test_steps_3_and_4():
         
         with timer_context("ステップ3: 情報収集", logger):
             try:
-                topics_data = await retry_handler.retry_async(
-                    claude_client.collect_topics_with_web_search
-                )
+                topics_data = claude_client.collect_topics_with_web_search()
                 
                 logger.info(f"\n📊 収集したトピック:")
                 for i, topic in enumerate(topics_data.get("topics", []), 1):
@@ -90,10 +88,7 @@ async def test_steps_3_and_4():
         
         with timer_context("ステップ4: 台本生成", logger):
             try:
-                script_content = await retry_handler.retry_async(
-                    claude_client.generate_dialogue_script,
-                    topics_data
-                )
+                script_content = claude_client.generate_dialogue_script(topics_data)
                 
                 logger.info(f"\n📄 生成された台本:")
                 logger.info(f"   タイトル: {script_content.get('title', 'N/A')}")
