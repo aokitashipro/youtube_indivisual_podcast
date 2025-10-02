@@ -19,6 +19,7 @@ class Settings(BaseSettings):
         default="assets/credentials/google-credentials.json",
         env="GOOGLE_CREDENTIALS_PATH"
     )
+    GAS_WEB_APP_URL: Optional[str] = Field(default=None, env="GAS_WEB_APP_URL")
     
     # OpenAI設定（オプション: 音声生成で使用しない）
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
