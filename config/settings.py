@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     GEMINI_API_KEY_2: Optional[str] = Field(default=None, env="GEMINI_API_KEY_2")
     GEMINI_API_KEY_3: Optional[str] = Field(default=None, env="GEMINI_API_KEY_3")
     
+    # ElevenLabs API設定
+    ELEVENLABS_API_KEY: Optional[str] = Field(default=None, env="ELEVENLABS_API_KEY")
+    
     # Google Cloud TTS設定（オプション・認証ファイル必要）
     GOOGLE_TTS_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_TTS_API_KEY")
     GOOGLE_TTS_API_KEY_1: Optional[str] = Field(default=None, env="GOOGLE_TTS_API_KEY_1")
@@ -46,8 +49,11 @@ class Settings(BaseSettings):
     # 音声設定
     VOICE_A: str = Field(default="ja-JP-Neural2-C", env="VOICE_A")
     VOICE_A_PITCH: float = Field(default=0.0, env="VOICE_A_PITCH")
-    VOICE_B: str = Field(default="ja-JP-Neural2-D", env="VOICE_B")
-    VOICE_B_PITCH: float = Field(default=-2.0, env="VOICE_B_PITCH")
+    VOICE_B: str = Field(default="ja-JP-Standard-A", env="VOICE_B")
+    VOICE_B_PITCH: float = Field(default=0.0, env="VOICE_B_PITCH")
+    
+    # 音声設定（追加）
+    VOICE_B_SPEAKING_RATE: float = Field(default=1.2, env="VOICE_B_SPEAKING_RATE")
     
     # アプリケーション設定
     DEBUG: bool = Field(default=False, env="DEBUG")

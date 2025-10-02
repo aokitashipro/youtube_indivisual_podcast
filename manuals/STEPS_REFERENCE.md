@@ -11,8 +11,8 @@
 | 1 | 初期化 | - | ✅ 実装済み |
 | 2 | Sheets新規行作成 | - | ✅ 実装済み |
 | 3 | 情報収集 | 2-3分 | ✅ 実装済み |
-| 4 | 台本生成 | 2-3分 | 📝 要実装 |
-| 5 | 音声生成 | 5-10分 | 📝 要実装 |
+| 4 | 台本生成 | 2-3分 | ✅ 実装済み |
+| 5 | 音声生成 | 5-10分 | ✅ 実装済み |
 | 6 | 字幕生成 | 1-2分 | 📝 要実装 |
 | 7 | 動画生成 | 3-5分 | 📝 要実装 |
 | 8 | メタデータ生成 | 1分 | 📝 要実装 |
@@ -313,12 +313,12 @@ async def generate_dialogue_script(self, topics_data: Dict[str, Any]) -> Dict[st
 - 15-20分の長さ
 - 結果を `self.results["script_content"]` に保存
 
-### 📝 実装状態
-**未実装** - `IMPLEMENTATION_GUIDE.md` 参照
+### ✅ 実装状態
+**完了** - 対談形式の台本生成が実装済み
 
 ---
 
-## 📝 ステップ5: 音声生成（並列処理）
+## ✅ ステップ5: 音声生成（並列処理）
 
 ### 📍 実装場所
 - `main.py` → `PodcastPipeline.step_05_generate_audio()`（要追加）
@@ -440,8 +440,8 @@ async def _generate_single_audio(self, text: str, speaker: str, output_path: str
 - 音声ファイルを結合
 - リトライは2回
 
-### 📝 実装状態
-**未実装** - `IMPLEMENTATION_GUIDE.md` 参照
+### ✅ 実装状態
+**完了** - Google Cloud TTS APIを使用した並列音声生成が実装済み
 
 ---
 

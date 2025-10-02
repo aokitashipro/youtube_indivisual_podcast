@@ -176,7 +176,7 @@ class GeminiAudioGenerator:
         output_dir: Path
     ) -> Optional[Path]:
         """
-        Gemini APIを使用して1つのチャンクの音声を生成
+        Google Cloud Text-to-Speech APIを使用して1つのチャンクの音声を生成
         
         Args:
             chunk: チャンク情報
@@ -192,38 +192,116 @@ class GeminiAudioGenerator:
             
             logger.debug(f"🎤 チャンク{chunk_id}の音声生成中... (話者: {speaker}さん, {len(text)}文字)")
             
-            # APIキーを取得
-            api_key = self._get_next_api_key()
-            if not api_key:
-                logger.error("❌ APIキーが利用できません")
+            # Google Cloud Text-to-Speech APIを使用
+            try:
+                from google.cloud import texttospeech
+            except ImportError:
+                logger.error("❌ google-cloud-texttospeech がインストールされていません")
+                logger.info("   インストール: pip install google-cloud-texttospeech")
                 return None
             
-            # Gemini APIリクエスト
-            url = f"{self.api_base_url}/models/{self.model_name}:generateContent"
+            # Google Cloud TTS クライアントを初期化（OAuth認証対応）
+            try:
+                from google.oauth2.credentials import Credentials
+                from google_auth_oauthlib.flow import InstalledAppFlow
+                from google.auth.transport.requests import Request
+                import pickle
+                
+                SCOPES = ['https://www.googleapis.com/auth/cloud-platform']
+                credentials_path = Path(self.settings.GOOGLE_CREDENTIALS_PATH)
+                
+                if not credentials_path.exists():
+                    logger.error(f"❌ 認証ファイルが見つかりません: {credentials_path}")
+                    return None
+                
+                creds = None
+                token_file = Path("assets/credentials/tts_token.pickle")
+                
+                # 既存のトークンを確認
+                if token_file.exists():
+                    with open(token_file, 'rb') as token:
+                        creds = pickle.load(token)
+                
+                # 認証が無効または期限切れの場合は再認証
+                if not creds or not creds.valid:
+                    if creds and creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                    else:
+                        flow = InstalledAppFlow.from_client_secrets_file(
+                            str(credentials_path), SCOPES)
+                        creds = flow.run_local_server(port=0)
+                    
+                    # トークンを保存
+                    with open(token_file, 'wb') as token:
+                        pickle.dump(creds, token)
+                
+                client = texttospeech.TextToSpeechClient(credentials=creds)
+                logger.debug(f"✅ Google TTSクライアント初期化成功（OAuth認証）")
+                
+            except Exception as e:
+                logger.error(f"❌ Google TTSクライアントの初期化に失敗: {e}")
+                logger.info("   認証情報を確認してください: assets/credentials/google-credentials.json")
+                return None
             
-            # 音声生成のプロンプト
-            # Note: Gemini APIの音声生成機能はまだベータ版のため、
-            # 実際にはText-to-Speechではなく、テキスト生成を使用
-            # 実際の音声生成APIが利用可能になったら更新する必要があります
+            # 話者に応じて音声設定を選択（設定ファイルから取得）
+            if speaker == 'A':
+                # Aさん（男性）- 楽観派
+                voice_name = self.settings.VOICE_A  # ja-JP-Neural2-C
+                pitch = self.settings.VOICE_A_PITCH  # 0.0
+                logger.debug(f"   音声設定: {voice_name} (ピッチ: {pitch})")
+            else:
+                # Bさん（女性）- 懐疑派
+                voice_name = self.settings.VOICE_B  # ja-JP-Standard-A
+                pitch = self.settings.VOICE_B_PITCH  # 0.0
+                logger.debug(f"   音声設定: {voice_name} (ピッチ: {pitch})")
             
-            # 仮実装：ここでは構造だけ示す
-            logger.warning(f"⚠️ Gemini音声生成APIはまだ実装中です（チャンク{chunk_id}）")
+            # 音声生成リクエスト
+            synthesis_input = texttospeech.SynthesisInput(text=text)
             
-            # TODO: 実際のGemini Audio APIの実装
-            # 現時点ではダミーファイルを作成
-            output_file = output_dir / f"chunk_{chunk_id:03d}_{speaker}.wav"
+            voice = texttospeech.VoiceSelectionParams(
+                language_code='ja-JP',
+                name=voice_name
+            )
             
-            # ダミー音声ファイル（実装時は実際の音声データに置き換え）
-            if PYDUB_AVAILABLE:
-                # 1秒の無音（ダミー）
-                silence = AudioSegment.silent(duration=1000)
-                silence.export(str(output_file), format='wav')
-                logger.debug(f"✅ チャンク{chunk_id}のダミー音声生成完了")
+            # 話す速度を設定（Bさんの場合は設定から取得）
+            if speaker == 'A':
+                speaking_rate = 1.0  # 男性は標準速度
+            else:
+                speaking_rate = getattr(self.settings, 'VOICE_B_SPEAKING_RATE', 1.2)  # 女性は1.2
             
-            return output_file
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+                pitch=float(pitch),
+                speaking_rate=float(speaking_rate)
+            )
+            
+            # 音声生成を実行
+            try:
+                response = client.synthesize_speech(
+                    input=synthesis_input,
+                    voice=voice,
+                    audio_config=audio_config
+                )
+                
+                # 音声ファイルを保存
+                output_file = output_dir / f"chunk_{chunk_id:03d}_{speaker}.wav"
+                
+                with open(output_file, 'wb') as out:
+                    out.write(response.audio_content)
+                
+                file_size = output_file.stat().st_size
+                logger.info(f"✅ チャンク{chunk_id}の音声生成完了: {output_file.name} ({file_size/1024:.1f}KB)")
+                
+                return output_file
+                
+            except Exception as e:
+                logger.error(f"❌ Google TTS API呼び出しエラー: {e}")
+                return None
             
         except Exception as e:
             logger.error(f"❌ チャンク{chunk.get('chunk_id')}の音声生成エラー: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     async def generate_audio_parallel(
