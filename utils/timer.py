@@ -19,10 +19,12 @@ class Timer:
         self.end_time = None
         self.duration = None
         self.timings = []
+        self.is_running = False
     
     def start(self):
         """計測開始"""
         self.start_time = time.time()
+        self.is_running = True
         self.logger.debug(f"{self.name} の計測を開始しました")
     
     def stop(self):
@@ -33,6 +35,7 @@ class Timer:
         
         self.end_time = time.time()
         self.duration = self.end_time - self.start_time
+        self.is_running = False
         
         self.logger.info(f"{self.name} の処理時間: {self.duration:.3f}秒")
         
@@ -44,10 +47,19 @@ class Timer:
             "end_time": self.end_time,
             "timestamp": datetime.now().isoformat()
         })
+    
+    def get_formatted_time(self) -> str:
+        """フォーマットされた処理時間を取得（例: "25分30秒"）"""
+        if self.duration is None:
+            return "0秒"
         
-        # リセット
-        self.start_time = None
-        self.end_time = None
+        minutes = int(self.duration // 60)
+        seconds = int(self.duration % 60)
+        
+        if minutes > 0:
+            return f"{minutes}分{seconds}秒"
+        else:
+            return f"{seconds}秒"
     
     def get_duration(self) -> Optional[float]:
         """処理時間を取得"""
