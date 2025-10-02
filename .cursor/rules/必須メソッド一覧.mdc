@@ -1,0 +1,607 @@
+# 必須メソッド一覧 - 実装チェックリスト
+
+このファイルは実装が必要なメソッドとそのシグネチャを定義します。
+AIアシスタントはこのファイルを参照して、正しいメソッド名とシグネチャで実装を行ってください。
+
+## ✅ 実装済みクラス（既存）
+
+### config/settings.py
+```python
+class Settings(BaseSettings):
+    # 全ての環境変数を管理
+    # pydantic BaseSettings を継承
+    pass
+```
+
+### utils/logger.py
+```python
+def setup_logger(log_level: str, log_file: str = None) -> logging.Logger
+def get_logger(name: str) -> logging.Logger
+```
+
+### utils/error_handler.py
+```python
+class ErrorHandler:
+    def __init__(self, logger: logging.Logger)
+    def handle_error(self, error: Exception, context: Dict[str, Any]) -> Dict[str, Any]
+    def handle_api_error(self, error: Exception, api_name: str) -> Dict[str, Any]
+    def get_error_summary(self) -> Dict[str, Any]
+
+class RetryHandler:
+    def __init__(self, logger: logging.Logger, max_retries: int = 3, delay: float = 1.0)
+    async def retry_async(self, func, *args, **kwargs)
+    def retry_sync(self, func, *args, **kwargs)
+```
+
+### utils/timer.py
+```python
+class Timer:
+    def __init__(self, name: str, logger: logging.Logger)
+    def start(self) -> None
+    def stop(self) -> None
+    def get_duration(self) -> float
+
+def timer_context(name: str, logger: logging.Logger)
+```
+
+---
+
+## 📝 要実装メソッド
+
+### modules/sheets_manager.py
+
+#### 必須メソッド1: create_new_row
+```python
+async def create_new_row(self, row_data: Dict[str, Any]) -> str:
+    """
+    Google Sheetsに新規行を作成
+    
+    Args:
+        row_data: 行に書き込むデータ（Dict形式）
+                  例: {"実行日時": "2024-01-01 10:00:00", "ステータス": "処理中"}
+    
+    Returns:
+        str: 作成された行のID（行番号の文字列）
+    
+    使用場所: main.py step_02_create_sheet_row()
+    """
+    try:
+        spreadsheet = self.client.open_by_key(self.settings.GOOGLE_SHEETS_ID)
+        worksheet = spreadsheet.sheet1
+        
+        # 列のヘッダー順序に合わせてデータを準備
+        row_values = list(row_data.values())
+        worksheet.append_row(row_values)
+        
+        # 追加された行番号を取得
+        row_id = len(worksheet.get_all_values())
+        
+        logger.info(f"新規行を作成しました: 行{row_id}")
+        return str(row_id)
+    except Exception as e:
+        logger.error(f"新規行作成に失敗: {e}")
+        raise
+```
+
+#### 必須メソッド2: update_row
+```python
+async def update_row(self, row_id: str, data: Dict[str, Any]) -> None:
+    """
+    Google Sheetsの指定行を更新
+    
+    Args:
+        row_id: 更新する行のID（行番号の文字列）
+        data: 更新するデータ（Dict形式）
+              例: {"ステータス": "完了", "進捗": "完了"}
+    
+    Returns:
+        None
+    
+    使用場所: 
+        - main.py step_03_collect_information() (進捗更新)
+        - main.py step_11_record_results() (最終結果記録)
+    """
+    try:
+        spreadsheet = self.client.open_by_key(self.settings.GOOGLE_SHEETS_ID)
+        worksheet = spreadsheet.sheet1
+        
+        # ヘッダー行を取得
+        headers = worksheet.row_values(1)
+        
+        # 各データを該当する列に更新
+        for key, value in data.items():
+            if key in headers:
+                col_index = headers.index(key) + 1  # 1-indexed
+                cell = worksheet.cell(int(row_id), col_index)
+                worksheet.update_cell(int(row_id), col_index, value)
+        
+        logger.info(f"行{row_id}を更新しました")
+    except Exception as e:
+        logger.error(f"行更新に失敗: {e}")
+        raise
+```
+
+---
+
+### modules/claude_client.py
+
+#### 必須メソッド1: collect_topics_with_web_search
+```python
+async def collect_topics_with_web_search(self) -> Dict[str, Any]:
+    """
+    Claude APIのweb_search機能を使用して情報収集
+    
+    情報源:
+        - Indie Hackers (https://www.indiehackers.com/)
+        - Product Hunt (https://www.producthunt.com/)
+        - Hacker News Show HN (https://news.ycombinator.com/show)
+    
+    Returns:
+        Dict[str, Any]: 収集したトピックデータ
+        {
+            "topics": [
+                {
+                    "title": str,
+                    "summary": str,
+                    "url": str,
+                    "category": str,
+                    "interesting_points": str
+                },
+                ...
+            ],
+            "collected_at": str,
+            "total_count": int
+        }
+    
+    使用場所: main.py step_03_collect_information()
+    目標件数: 3-5件
+    目標時間: 2-3分
+    """
+    try:
+        prompt = """
+        以下の情報源から、最新の個人開発・AI関連の興味深いトピックを3-5件収集してください：
+        
+        1. Indie Hackers (https://www.indiehackers.com/)
+        2. Product Hunt (https://www.producthunt.com/)
+        3. Hacker News Show HN (https://news.ycombinator.com/show)
+        
+        各トピックについて以下の情報を含めてください：
+        - タイトル
+        - 概要（200文字程度）
+        - URL
+        - カテゴリ（個人開発/AI/MicroSaaS等）
+        - 興味深いポイント
+        
+        JSONフォーマットで返してください。
+        """
+        
+        response = self.client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=4000,
+            temperature=0.7,
+            tools=[{"type": "web_search"}],  # ⚠️ web_search有効化
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # レスポンスを解析
+        topics_data = self._parse_topics_response(response)
+        
+        logger.info(f"情報収集完了: {len(topics_data.get('topics', []))}件")
+        return topics_data
+    except Exception as e:
+        logger.error(f"情報収集に失敗: {e}")
+        raise
+```
+
+#### 必須メソッド2: generate_dialogue_script
+```python
+async def generate_dialogue_script(self, topics_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    対談形式の台本を生成
+    
+    Args:
+        topics_data: step_03で収集したトピックデータ
+    
+    Returns:
+        Dict[str, Any]: 生成された台本
+        {
+            "title": str,                    # タイトル
+            "full_script": str,             # 完全な台本テキスト
+            "sections": [                   # セクション分割
+                {
+                    "section_name": str,
+                    "content": str,
+                    "speaker": str,         # "A" or "B"
+                    "estimated_duration": int
+                },
+                ...
+            ],
+            "estimated_duration": int,      # 推定時間（秒）
+            "word_count": int               # 文字数
+        }
+    
+    使用場所: main.py step_04_generate_script()
+    目標時間: 2-3分
+    台本長さ: 15-20分相当
+    
+    キャラクター設定:
+        - Aさん（楽観派）: 新しいものに興味津々、実装の可能性を考える
+        - Bさん（懐疑派）: 現実的・批判的視点、ビジネス面を問う
+    
+    構成:
+        1. オープニング (1分)
+        2. トピック1 (3-4分)
+        3. トピック2 (3-4分)
+        4. トピック3 (3-4分)
+        5. [追加トピック]（オプション）
+        6. クロージング (1-2分)
+    """
+    try:
+        prompt = f"""
+        以下のトピックについて、対談形式のポッドキャスト台本を生成してください：
+        
+        トピック:
+        {json.dumps(topics_data, ensure_ascii=False, indent=2)}
+        
+        キャラクター:
+        - Aさん（楽観派）: 新しいものに興味津々、実装の可能性を考える
+        - Bさん（懐疑派）: 現実的・批判的視点、ビジネス面を問う
+        
+        構成（15-20分）:
+        1. オープニング (1分) - 軽い挨拶と今日のテーマ紹介
+        2. トピック1 (3-4分) - 詳しく掘り下げる
+        3. トピック2 (3-4分) - 詳しく掘り下げる
+        4. トピック3 (3-4分) - 詳しく掘り下げる
+        5. クロージング (1-2分) - まとめと次回予告
+        
+        要件:
+        - 自然な会話形式（掛け合い）
+        - 聞き手が興味を持てる内容
+        - 具体的な例やエピソードを含める
+        - 話者を明記: [Aさん] [Bさん]
+        """
+        
+        response = self.client.messages.create(
+            model="claude-3-sonnet-20240229",
+            max_tokens=4000,
+            temperature=0.7,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # レスポンスを解析
+        script_content = self._parse_script_response(response)
+        
+        logger.info(f"台本生成完了: {script_content.get('word_count', 0)}文字")
+        return script_content
+    except Exception as e:
+        logger.error(f"台本生成に失敗: {e}")
+        raise
+```
+
+---
+
+### modules/audio_generator.py
+
+#### 必須メソッド1: generate_audio_parallel
+```python
+async def generate_audio_parallel(self, script_content: Dict[str, Any]) -> str:
+    """
+    台本から音声を並列生成（高速化）
+    
+    Args:
+        script_content: step_04で生成した台本データ
+    
+    Returns:
+        str: 結合された音声ファイルのパス
+    
+    使用場所: main.py step_05_generate_audio()
+    目標時間: 5-10分
+    
+    処理フロー:
+        1. 台本を話者ごと・5000文字以内にチャンク分割
+        2. 各チャンクを並列処理（3並列推奨）
+        3. Google Cloud TTSで音声生成
+        4. 生成された音声ファイルを結合
+    
+    音声設定:
+        - Aさん: ja-JP-Neural2-C (ピッチ: 0)
+        - Bさん: ja-JP-Neural2-D (ピッチ: -2)
+    """
+    try:
+        from google.cloud import texttospeech
+        from pydub import AudioSegment
+        import asyncio
+        
+        full_script = script_content.get("full_script", "")
+        
+        # 台本を話者ごとに分割
+        chunks = self._split_script_by_speaker(full_script)
+        
+        # 並列処理で音声生成
+        tasks = []
+        for i, chunk in enumerate(chunks):
+            task = self._generate_single_audio(
+                chunk["text"],
+                chunk["speaker"],
+                f"temp/audio_chunk_{i}.mp3"
+            )
+            tasks.append(task)
+        
+        audio_files = await asyncio.gather(*tasks)
+        
+        # 音声ファイルを結合
+        final_audio_path = self._merge_audio_files(audio_files)
+        
+        logger.info(f"音声生成完了: {final_audio_path}")
+        return final_audio_path
+    except Exception as e:
+        logger.error(f"音声生成に失敗: {e}")
+        raise
+```
+
+#### 必須メソッド2: generate_subtitles
+```python
+async def generate_subtitles(
+    self, 
+    audio_path: str, 
+    script_content: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    音声から字幕データを生成（STT + マッチング）
+    
+    Args:
+        audio_path: step_05で生成した音声ファイルパス
+        script_content: step_04で生成した台本（正確なテキスト用）
+    
+    Returns:
+        Dict[str, Any]: 字幕データ
+        {
+            "subtitles": [
+                {
+                    "start_time": float,    # 秒
+                    "end_time": float,      # 秒
+                    "text": str,           # 表示テキスト
+                    "speaker": str         # "A" or "B"
+                },
+                ...
+            ],
+            "total_count": int,
+            "total_duration": float
+        }
+    
+    使用場所: main.py step_06_generate_subtitles()
+    目標精度: 95%以上
+    
+    処理フロー:
+        1. ElevenLabs STTで音声→テキスト変換（タイムスタンプ付き）
+        2. 元の台本テキストとマッチング（正確なテキストを使用）
+        3. タイムスタンプ + 正確なテキストを組み合わせ
+    """
+    try:
+        from elevenlabs import transcribe
+        
+        # ElevenLabs STTで文字起こし
+        with open(audio_path, "rb") as audio_file:
+            transcription = transcribe(audio_file)
+        
+        # 元の台本テキストを取得
+        original_script = script_content.get("full_script", "")
+        
+        # タイムスタンプとテキストをマッチング
+        subtitles = self._match_timestamps_with_script(
+            transcription,
+            original_script
+        )
+        
+        subtitle_data = {
+            "subtitles": subtitles,
+            "total_count": len(subtitles),
+            "total_duration": subtitles[-1]["end_time"] if subtitles else 0
+        }
+        
+        logger.info(f"字幕生成完了: {len(subtitles)}個")
+        return subtitle_data
+    except Exception as e:
+        logger.error(f"字幕生成に失敗: {e}")
+        raise
+```
+
+---
+
+### modules/video_generator.py
+
+#### 必須メソッド1: generate_video_with_subtitles
+```python
+async def generate_video_with_subtitles(
+    self,
+    audio_path: str,
+    subtitle_data: Dict[str, Any],
+    script_content: Dict[str, Any]
+) -> str:
+    """
+    字幕付き動画を生成
+    
+    Args:
+        audio_path: step_05で生成した音声ファイルパス
+        subtitle_data: step_06で生成した字幕データ
+        script_content: step_04で生成した台本（タイトル等に使用）
+    
+    Returns:
+        str: 生成された動画ファイルパス
+    
+    使用場所: main.py step_07_generate_video()
+    目標時間: 3-5分
+    
+    動画仕様:
+        - 解像度: 1920x1080 (Full HD)
+        - FPS: 30
+        - コーデック: libx264, aac
+    
+    構成:
+        - 背景画像（assets/background.png）
+        - 音声
+        - 字幕（下部中央、Y=900、フォントサイズ40px、黒背景70%透過）
+    """
+    try:
+        from moviepy.editor import (
+            AudioFileClip, ImageClip, TextClip,
+            CompositeVideoClip
+        )
+        
+        # 音声を読み込み
+        audio_clip = AudioFileClip(audio_path)
+        duration = audio_clip.duration
+        
+        # 背景画像を読み込み
+        background = ImageClip(
+            self.settings.BACKGROUND_IMAGE_PATH,
+            duration=duration
+        ).resize((self.settings.VIDEO_WIDTH, self.settings.VIDEO_HEIGHT))
+        
+        # 字幕クリップを作成
+        subtitle_clips = []
+        for sub in subtitle_data.get("subtitles", []):
+            txt_clip = TextClip(
+                sub["text"],
+                fontsize=40,
+                color="white",
+                font=self.settings.FONT_PATH,
+                method='caption',
+                size=(self.settings.VIDEO_WIDTH - 100, None),
+                bg_color='black@0.7'  # 黒背景（透過度70%）
+            ).set_position(('center', 900))  # Y=900
+            
+            txt_clip = txt_clip.set_start(sub["start_time"])
+            txt_clip = txt_clip.set_duration(
+                sub["end_time"] - sub["start_time"]
+            )
+            
+            subtitle_clips.append(txt_clip)
+        
+        # 動画を合成
+        video = CompositeVideoClip(
+            [background] + subtitle_clips
+        ).set_audio(audio_clip)
+        
+        # 出力パス
+        output_path = f"{self.settings.OUTPUT_DIR}/video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        
+        # 動画を出力
+        video.write_videofile(
+            output_path,
+            fps=self.settings.VIDEO_FPS,
+            codec='libx264',
+            audio_codec='aac'
+        )
+        
+        # リソースを解放
+        audio_clip.close()
+        video.close()
+        
+        logger.info(f"動画生成完了: {output_path}")
+        return output_path
+    except Exception as e:
+        logger.error(f"動画生成に失敗: {e}")
+        raise
+```
+
+#### 必須メソッド2: generate_thumbnail
+```python
+async def generate_thumbnail(self, metadata: Dict[str, Any]) -> str:
+    """
+    サムネイルを生成
+    
+    Args:
+        metadata: step_08で生成したメタデータ（タイトル等）
+    
+    Returns:
+        str: 生成されたサムネイルファイルパス
+    
+    使用場所: main.py step_09_generate_thumbnail()
+    
+    サムネイル仕様:
+        - サイズ: 1280x720（YouTubeサムネイル標準）
+        - フォーマット: PNG
+        - 背景: assets/background.pngを使用
+        - テキスト: タイトルを大きく表示
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        
+        # 背景画像を読み込み
+        img = Image.open(self.settings.BACKGROUND_IMAGE_PATH)
+        img = img.resize((1280, 720))
+        
+        # 描画オブジェクト
+        draw = ImageDraw.Draw(img)
+        
+        # フォントを読み込み
+        try:
+            font = ImageFont.truetype(self.settings.FONT_PATH, 60)
+        except:
+            font = ImageFont.load_default()
+        
+        # タイトルを描画
+        title = metadata.get("title", "YouTube AI Podcast")
+        
+        # テキストを中央に配置
+        bbox = draw.textbbox((0, 0), title, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        x = (1280 - text_width) // 2
+        y = (720 - text_height) // 2
+        
+        # 背景を描画（読みやすくする）
+        draw.rectangle(
+            [(x-20, y-20), (x+text_width+20, y+text_height+20)],
+            fill=(0, 0, 0, 180)
+        )
+        
+        # テキストを描画
+        draw.text((x, y), title, font=font, fill="white")
+        
+        # 保存
+        output_path = f"{self.settings.OUTPUT_DIR}/thumbnail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        img.save(output_path)
+        
+        logger.info(f"サムネイル生成完了: {output_path}")
+        return output_path
+    except Exception as e:
+        logger.error(f"サムネイル生成に失敗: {e}")
+        raise
+```
+
+---
+
+## 重要な注意事項
+
+### 1. メソッド名は絶対に変更しない
+上記のメソッド名とシグネチャは、`main.py`から呼び出されるため、**絶対に変更しないでください**。
+
+### 2. 戻り値の型を守る
+各メソッドの戻り値の型（Dict, str, None等）は、呼び出し元で使用されるため、**必ず守ってください**。
+
+### 3. エラーハンドリングは必須
+すべてのメソッドで`try-except`を実装し、エラー時は詳細をログ出力してから`raise`してください。
+
+### 4. ログ出力は必須
+処理の開始・完了時に必ずログを出力してください。絵文字を使用すると視認性が向上します。
+
+### 5. 非同期メソッドは`async def`
+すべてのメソッドは`async def`で定義してください。
+
+## 実装の確認方法
+
+各メソッドを実装したら、以下のように単体テストで確認できます：
+
+```python
+async def test_method():
+    settings = Settings()
+    manager = ModuleName(settings)
+    result = await manager.method_name(args)
+    print(result)
+
+# 実行
+import asyncio
+asyncio.run(test_method())
+```

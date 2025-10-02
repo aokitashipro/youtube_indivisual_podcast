@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 環境変数
+.env
+.env.local
+.env.production
+
+# 一時ファイル
+temp/
+*.tmp
+*.temp
+
+# 出力ファイル
+output/
+*.mp4
+*.mp3
+*.wav
+
+# 認証情報
+assets/credentials/
+*.json
+!assets/credentials/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ログ
+*.log
+logs/

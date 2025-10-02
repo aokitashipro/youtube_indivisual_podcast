@@ -1,0 +1,343 @@
+# YouTube AI Podcast - アーキテクチャ規則
+
+このファイルはAIアシスタントが常に参照すべきプロジェクトの構造と依存関係を定義します。
+
+## プロジェクト構造
+
+```
+youtube-ai/
+├── main.py                     # PodcastPipelineクラス（12ステップ）
+├── config/
+│   ├── settings.py            # Settings クラス（環境変数管理）
+│   └── prompts.yaml           # プロンプトテンプレート
+├── modules/                    # 各機能モジュール
+│   ├── sheets_manager.py      # SheetsManager
+│   ├── claude_client.py       # ClaudeClient
+│   ├── audio_generator.py     # AudioGenerator
+│   ├── video_generator.py     # VideoGenerator
+│   ├── metadata_generator.py  # MetadataGenerator
+│   ├── storage_manager.py     # StorageManager
+│   └── notifier.py            # Notifier
+└── utils/                      # ユーティリティ
+    ├── logger.py              # setup_logger, Timer
+    ├── error_handler.py       # ErrorHandler, RetryHandler
+    └── timer.py               # Timer, timer_context
+```
+
+## 重要な規則
+
+### 1. インポートの順序
+```python
+# 標準ライブラリ
+import os
+import sys
+from pathlib import Path
+
+# サードパーティ
+from dotenv import load_dotenv
+
+# プロジェクト内
+from config.settings import Settings
+from modules.xxx import Xxx
+from utils.logger import setup_logger
+```
+
+### 2. モジュール初期化パターン
+すべてのモジュールクラスは`settings`を受け取る：
+```python
+class ModuleName:
+    def __init__(self, settings):
+        self.settings = settings
+        # 初期化処理
+```
+
+### 3. 非同期メソッド
+すべてのステップメソッドは`async def`で定義：
+```python
+async def step_XX_description(self):
+    with timer_context("Step X: 説明", self.logger):
+        try:
+            # 処理
+        except Exception as e:
+            self.error_handler.handle_error(e, {"step": "xxx"})
+            raise Exception(f"XXXに失敗しました: {e}")
+```
+
+### 4. エラーハンドリング
+- 各ステップで`try-except`
+- `ErrorHandler`を使用してエラーを記録
+- リトライが必要な場合は`RetryHandler`を使用
+- エラー時は必ず`Notifier`で通知
+
+### 5. ログ出力
+- 各ステップの開始・完了をログ出力
+- 絵文字を使用して視認性向上
+- `timer_context`で処理時間を自動記録
+
+## モジュール間の依存関係
+
+### main.py → 全モジュール
+```python
+from config.settings import Settings
+from modules.sheets_manager import SheetsManager
+from modules.claude_client import ClaudeClient
+from modules.audio_generator import AudioGenerator
+from modules.video_generator import VideoGenerator
+from modules.metadata_generator import MetadataGenerator
+from modules.storage_manager import StorageManager
+from modules.notifier import Notifier
+from utils.logger import setup_logger
+from utils.error_handler import ErrorHandler, RetryHandler
+from utils.timer import Timer, timer_context
+```
+
+### 各モジュールが依存するもの
+
+#### sheets_manager.py
+```python
+from config.settings import Settings
+import gspread
+from google.oauth2.service_account import Credentials
+# 必要: assets/credentials/google-credentials.json
+```
+
+#### claude_client.py
+```python
+from config.settings import Settings
+import anthropic
+import yaml
+# 必要: config/prompts.yaml
+```
+
+#### audio_generator.py
+```python
+from config.settings import Settings
+from google.cloud import texttospeech
+from elevenlabs import transcribe
+from pydub import AudioSegment
+# 必要: assets/credentials/google-credentials.json
+```
+
+#### video_generator.py
+```python
+from config.settings import Settings
+from moviepy.editor import *
+from PIL import Image, ImageDraw, ImageFont
+# 必要: assets/background.png, assets/fonts/NotoSansJP-Regular.ttf
+```
+
+#### storage_manager.py
+```python
+from config.settings import Settings
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+# 必要: assets/credentials/google-credentials.json
+```
+
+#### notifier.py
+```python
+from config.settings import Settings
+from slack_sdk import WebClient
+```
+
+## 環境変数（必須）
+
+```bash
+# Claude API
+ANTHROPIC_API_KEY=sk-ant-xxx
+
+# Google APIs
+GOOGLE_SHEETS_ID=xxx
+GOOGLE_CREDENTIALS_PATH=assets/credentials/google-credentials.json
+GOOGLE_DRIVE_FOLDER_ID=xxx
+
+# ElevenLabs
+ELEVENLABS_API_KEY=xxx
+
+# Slack
+SLACK_BOT_TOKEN=xoxb-xxx
+SLACK_CHANNEL=#channel-name
+
+# アプリケーション設定
+DEBUG=True
+LOG_LEVEL=INFO
+TEMP_DIR=temp/
+OUTPUT_DIR=output/
+```
+
+## データフロー（重要）
+
+```
+ステップ1 → 初期化
+  ↓
+ステップ2 → Google Sheets新規行作成
+  ↓ (sheet_row_id を保存)
+ステップ3 → 情報収集 (Claude API + web_search)
+  ↓ (topics_data を保存)
+ステップ4 → 台本生成 (Claude API)
+  ↓ (script_content を保存)
+ステップ5 → 音声生成 (Google TTS, 並列処理)
+  ↓ (audio_path を保存)
+ステップ6 → 字幕生成 (ElevenLabs STT)
+  ↓ (subtitle_data を保存)
+ステップ7 → 動画生成 (MoviePy)
+  ↓ (video_path を保存)
+ステップ8 → メタデータ生成
+  ↓ (metadata を保存)
+ステップ9 → サムネイル生成
+  ↓ (thumbnail_path を保存)
+ステップ10 → Google Driveアップロード
+  ↓ (drive_urls を保存)
+ステップ11 → Google Sheets結果記録
+  ↓
+ステップ12 → 完了通知 (Slack)
+```
+
+## self.results の構造
+
+```python
+self.results = {
+    "start_time": datetime,           # ステップ1
+    "sheet_row_id": str,              # ステップ2
+    "topics_data": Dict,              # ステップ3
+    "script_content": Dict,           # ステップ4
+    "audio_path": str,                # ステップ5
+    "subtitle_data": Dict,            # ステップ6
+    "video_path": str,                # ステップ7
+    "metadata": Dict,                 # ステップ8
+    "thumbnail_path": str,            # ステップ9
+    "drive_urls": {                   # ステップ10
+        "video": str,
+        "audio": str,
+        "thumbnail": str
+    },
+    "end_time": datetime,             # ステップ11
+    "total_duration": float,          # ステップ11
+    "status": str,                    # "completed" or "failed"
+    "error_message": str              # エラー時のみ
+}
+```
+
+## コーディング規約
+
+### 1. ファイル編集時の注意
+- 既存のインポートを削除しない
+- インデントは4スペース
+- 非同期関数は必ず`async def`
+- 型ヒントを使用: `def method(self, param: str) -> Dict[str, Any]:`
+
+### 2. 新規メソッド追加時
+- docstringを必ず書く
+- エラーハンドリングを含める
+- ログ出力を含める
+- 戻り値の型を明記
+
+### 3. API呼び出し時
+- リトライロジックを実装（Claude API: 3回、その他: 2回）
+- エラー時は詳細をログ出力
+- `ErrorHandler.handle_api_error()`を使用
+
+### 4. ファイル操作時
+- パスは`Path`オブジェクトを使用
+- 一時ファイルは`temp/`に保存
+- 最終ファイルは`output/`に保存
+- ファイル存在チェックを行う
+
+## よくあるミス防止
+
+### ❌ NG
+```python
+# 同期関数として定義
+def step_01_initialize(self):
+    pass
+
+# エラーハンドリングなし
+def some_method(self):
+    result = api_call()
+    return result
+
+# ログなし
+def some_method(self):
+    return process()
+```
+
+### ✅ OK
+```python
+# 非同期関数として定義
+async def step_01_initialize(self):
+    with timer_context("Step 1: 初期化", self.logger):
+        try:
+            # 処理
+            self.logger.info("✅ 初期化完了")
+        except Exception as e:
+            self.error_handler.handle_error(e, {"step": "initialize"})
+            raise Exception(f"初期化に失敗: {e}")
+```
+
+## 外部API使用時の注意
+
+### Claude API
+- モデル: `claude-3-sonnet-20240229`
+- web_search使用時: `tools=[{"type": "web_search"}]`
+- max_tokens: 4000
+- temperature: 0.7
+
+### Google Cloud TTS
+- Aさん: `ja-JP-Neural2-C` (ピッチ: 0)
+- Bさん: `ja-JP-Neural2-D` (ピッチ: -2)
+- 5000文字以内にチャンク分割
+
+### ElevenLabs
+- STT（字幕用）のみ使用
+- 音声ファイルをバイナリで送信
+
+### MoviePy
+- 解像度: 1920x1080
+- FPS: 30
+- コーデック: libx264, aac
+
+## 実装の優先順位
+
+1. **必須メソッド追加**
+   - `sheets_manager.py`: `create_new_row()`, `update_row()`
+   - `claude_client.py`: `collect_topics_with_web_search()`, `generate_dialogue_script()`
+   - `audio_generator.py`: `generate_audio_parallel()`, `generate_subtitles()`
+   - `video_generator.py`: `generate_video_with_subtitles()`, `generate_thumbnail()`
+
+2. **main.pyのステップ追加**
+   - `step_04_generate_script()`
+   - `step_05_generate_audio()`
+   - `step_06_generate_subtitles()`
+   - `step_07_generate_video()`
+   - `step_08_generate_metadata()`
+   - `step_09_generate_thumbnail()`
+   - `step_10_upload_to_drive()`
+   - `step_11_record_results()`
+   - `step_12_send_completion_notification()`
+
+3. **run()メソッドの更新**
+   - 201行目の`# 他のステップも同様に実装...`を削除
+   - ステップ4-12の呼び出しを追加
+
+## トラブルシューティング
+
+### インポートエラー
+- `config/settings.py`が最初に読み込まれることを確認
+- 循環インポートに注意
+
+### 認証エラー
+- `assets/credentials/google-credentials.json`の存在確認
+- 環境変数の設定確認
+
+### 非同期エラー
+- `await`を忘れていないか確認
+- `async def`で定義されているか確認
+
+## 参考ドキュメント
+
+詳細は以下を参照：
+- `docs/QUICK_REFERENCE.md` - 一目でわかる実装リファレンス
+- `docs/ARCHITECTURE.md` - システム全体のアーキテクチャ
+- `docs/STEPS_REFERENCE.md` - 各ステップの詳細
+- `docs/MODULE_DEPENDENCIES.md` - モジュール依存関係
+- `IMPLEMENTATION_GUIDE.md` - ステップ4-12の実装コード
