@@ -91,8 +91,28 @@ class SubtitleGenerator:
                 original_script
             )
             
+            # 🔧 デバッグ: 分割前の字幕情報をログ出力
+            logger.info(f"📊 分割前の字幕: {len(subtitles)}個")
+            if subtitles:
+                logger.info(f"   最初: {subtitles[0]['start']:.2f}s - {subtitles[0]['end']:.2f}s")
+                logger.info(f"   最後: {subtitles[-1]['start']:.2f}s - {subtitles[-1]['end']:.2f}s")
+            
             # 3行を超える字幕を分割
             subtitles = self._split_long_subtitles(subtitles)
+            
+            # 🔧 デバッグ: 分割後の字幕情報をログ出力
+            logger.info(f"📊 分割後の字幕: {len(subtitles)}個")
+            if subtitles:
+                logger.info(f"   最初: {subtitles[0]['start']:.2f}s - {subtitles[0]['end']:.2f}s")
+                logger.info(f"   最後: {subtitles[-1]['start']:.2f}s - {subtitles[-1]['end']:.2f}s")
+                
+                # タイムスタンプの連続性をチェック
+                for i in range(1, len(subtitles)):
+                    if subtitles[i]['start'] < subtitles[i-1]['end']:
+                        logger.warning(f"   ⚠️ 字幕{i}が重複: 前={subtitles[i-1]['end']:.2f}s, 現={subtitles[i]['start']:.2f}s")
+                    elif subtitles[i]['start'] > subtitles[i-1]['end'] + 0.5:
+                        gap = subtitles[i]['start'] - subtitles[i-1]['end']
+                        logger.warning(f"   ⚠️ 字幕{i}に大きな間隔: {gap:.2f}秒")
             
             # タイミングオフセットを適用
             if time_offset != 0.0:
@@ -107,7 +127,7 @@ class SubtitleGenerator:
                 "total_duration": subtitles[-1]["end"] if subtitles else 0
             }
             
-            logger.info(f"✅ 字幕生成完了: {len(subtitles)}個のセグメント")
+            logger.info(f"✅ 字幕生成完了: {len(subtitles)}個のセグメント、総時間: {result['total_duration']:.2f}秒")
             return result
             
         except Exception as e:
@@ -258,34 +278,50 @@ class SubtitleGenerator:
         
         subtitles = []
         
+        # 🔧 修正: difflibを使ったより正確なマッチング
+        # STT結果の全テキストを結合
+        stt_full_text = ''.join([w.get('text', w.get('word', '')) for w in words]).replace(' ', '').replace('　', '')
+        
+        # 台本の全テキストを結合
+        script_full_text = ''.join([seg['text'] for seg in script_segments]).replace(' ', '').replace('　', '')
+        
+        logger.info(f"📊 マッチング準備:")
+        logger.info(f"   STT文字数: {len(stt_full_text)}")
+        logger.info(f"   台本文字数: {len(script_full_text)}")
+        
         # 単語を台本のセグメントにグループ化
         word_index = 0
+        accumulated_chars = 0  # STT側の累積文字数
         
         for seg_idx, segment in enumerate(script_segments):
             segment_text = segment['text']
             segment_chars = segment_text.replace(' ', '').replace('　', '')
             
-            logger.info(f"📝 セグメント{seg_idx + 1}: {segment_text[:50]}... ({len(segment_chars)}文字)")
+            logger.info(f"📝 セグメント{seg_idx + 1}/{len(script_segments)}: {segment_text[:50]}... ({len(segment_chars)}文字)")
             
             # セグメントの開始時刻を取得
             if word_index < len(words):
-                # start_timeまたはstartキーを取得
                 start_time = words[word_index].get('start_time', 
                              words[word_index].get('start', 
                              words[word_index].get('timestamp', 0)))
             else:
-                start_time = subtitles[-1]['end'] if subtitles else 0
+                # 単語が足りない場合は前のセグメントから推定
+                if subtitles:
+                    start_time = subtitles[-1]['end']
+                else:
+                    start_time = 0
+                logger.warning(f"   ⚠️ 単語インデックス超過: {word_index}/{len(words)}")
             
-            # セグメントに対応する単語を集める
-            char_count = 0
+            # 🔧 改善: セグメントの文字数分の単語を取得（柔軟に）
+            target_chars = accumulated_chars + len(segment_chars)
+            char_count = accumulated_chars
             end_time = start_time
+            words_used = 0
             
-            while word_index < len(words) and char_count < len(segment_chars):
+            while word_index < len(words):
                 word_data = words[word_index]
                 word_text = word_data.get('text', word_data.get('word', ''))
                 word_chars = word_text.replace(' ', '').replace('　', '')
-                
-                char_count += len(word_chars)
                 
                 # 終了時刻を更新
                 end_time = word_data.get('end_time',
@@ -293,24 +329,34 @@ class SubtitleGenerator:
                            word_data.get('start_time', 
                            word_data.get('start', end_time)) + 0.2))
                 
+                char_count += len(word_chars)
                 word_index += 1
+                words_used += 1
                 
-                # セグメントの文字数に達したら終了
-                if char_count >= len(segment_chars):
+                # 目標文字数に達したら終了（多少のマージンを許容）
+                if char_count >= target_chars:
+                    accumulated_chars = char_count
+                    break
+                
+                # 最後の単語に達した場合は終了
+                if word_index >= len(words):
+                    accumulated_chars = char_count
+                    logger.warning(f"   ⚠️ 最後の単語に到達: {word_index}/{len(words)}")
                     break
             
             # 終了時刻が開始時刻より小さい場合は調整
             if end_time <= start_time:
                 end_time = start_time + 3.0
+                logger.warning(f"   ⚠️ 終了時刻を調整: {end_time:.2f}s")
             
             subtitles.append({
                 "start": start_time,
                 "end": end_time,
-                "text": segment_text,
+                "text": segment_text,  # 🔧 重要: STT結果ではなく台本のテキストを使用
                 "speaker": segment['speaker']
             })
             
-            logger.info(f"   ⏱️ {start_time:.2f}s - {end_time:.2f}s ({end_time - start_time:.2f}秒)")
+            logger.info(f"   ⏱️ {start_time:.2f}s - {end_time:.2f}s ({end_time - start_time:.2f}秒, {words_used}単語使用)")
         
         logger.info(f"✅ {len(subtitles)}個の字幕を生成しました")
         return subtitles
@@ -350,27 +396,45 @@ class SubtitleGenerator:
         # [Aさん] または [Bさん] で分割
         import re
         
+        # 🔧 デバッグ: 元の台本の情報
+        logger.info(f"📝 台本パース開始: {len(script)}文字")
+        
         # メタ情報（タイトル、文字数など）を除去
         # 最初の[Aさん]または[Bさん]が出現するまでの部分をスキップ
         first_speaker_match = re.search(r'\[(Aさん|Bさん)\]', script)
         if first_speaker_match:
+            removed_prefix = script[:first_speaker_match.start()]
+            if removed_prefix.strip():
+                logger.info(f"   メタ情報を除去: {len(removed_prefix)}文字")
+                logger.debug(f"   除去内容: {removed_prefix[:100]}...")
             script = script[first_speaker_match.start():]
         
         pattern = r'\[(Aさん|Bさん)\]\s*'
         parts = re.split(pattern, script)
         
         current_speaker = None
+        skipped_segments = 0
+        
         for i, part in enumerate(parts):
             if part in ['Aさん', 'Bさん']:
                 current_speaker = 'A' if part == 'Aさん' else 'B'
             elif current_speaker and part.strip():
-                # 句読点のみのセグメントを除外（最低5文字以上）
                 text = part.strip()
-                if len(text) >= 5:
+                
+                # 🔧 改善: 最低文字数を3文字に緩和（短い相槌なども含める）
+                if len(text) >= 3:
                     segments.append({
                         "speaker": current_speaker,
                         "text": text
                     })
+                else:
+                    skipped_segments += 1
+                    logger.debug(f"   スキップ: {current_speaker}さん「{text}」({len(text)}文字)")
+        
+        logger.info(f"✅ 台本パース完了: {len(segments)}セグメント（スキップ: {skipped_segments}個）")
+        if segments:
+            logger.info(f"   最初: {segments[0]['speaker']}さん「{segments[0]['text'][:30]}...」")
+            logger.info(f"   最後: {segments[-1]['speaker']}さん「{segments[-1]['text'][:30]}...」")
         
         return segments
     
@@ -417,16 +481,21 @@ class SubtitleGenerator:
         from PIL import Image, ImageDraw, ImageFont
         import os
         
+        logger.info(f"✂️ 字幕分割処理開始: {len(subtitles)}セグメント（最大{max_lines}行）")
+        
         # フォントを読み込み
         font_size = 60
         font_path = "assets/fonts/Noto_Sans_JP/static/NotoSansJP-Medium.ttf"
         try:
             if os.path.exists(font_path):
                 font = ImageFont.truetype(font_path, font_size)
+                logger.debug(f"   フォント読み込み成功: {font_path}")
             else:
                 font = ImageFont.load_default()
-        except:
+                logger.warning(f"   ⚠️ フォントが見つかりません: {font_path}、デフォルトフォント使用")
+        except Exception as e:
             font = ImageFont.load_default()
+            logger.warning(f"   ⚠️ フォント読み込みエラー: {e}、デフォルトフォント使用")
         
         new_subtitles = []
         img = Image.new('RGBA', (1920, 1080), (0, 0, 0, 0))
@@ -498,7 +567,12 @@ class SubtitleGenerator:
                     else:
                         segment_start = new_subtitles[-1]['end']
                     
-                    segment_end = segment_start + segment_duration
+                    # 🔧 修正: 最後のセグメントは元の終了時刻に合わせる
+                    if seg_idx == segments_count - 1:
+                        segment_end = subtitle['end']
+                        logger.info(f"   📌 最終セグメント: 元の終了時刻に調整 ({segment_end:.2f}s)")
+                    else:
+                        segment_end = segment_start + segment_duration
                     
                     new_subtitles.append({
                         "start": segment_start,
@@ -507,7 +581,7 @@ class SubtitleGenerator:
                         "speaker": subtitle.get('speaker', '')
                     })
                     
-                    logger.info(f"   セグメント{seg_idx + 1}/{segments_count}: {segment_text[:30]}... ({len(segment_lines)}行, {segment_duration:.2f}秒)")
+                    logger.info(f"   セグメント{seg_idx + 1}/{segments_count}: {segment_text[:30]}... ({len(segment_lines)}行, {segment_end - segment_start:.2f}秒, {segment_start:.2f}-{segment_end:.2f}s)")
         
         logger.info(f"🔄 字幕分割完了: {len(subtitles)}セグメント → {len(new_subtitles)}セグメント")
         return new_subtitles

@@ -93,6 +93,16 @@ class GeminiAudioGenerator:
         """
         logger.info(f"📝 台本を分割中... (全{len(script)}文字)")
         
+        # 🔧 メタ情報（タイトル、文字数など）を除去
+        # 最初の[Aさん]または[Bさん]が出現するまでの部分をスキップ
+        first_speaker_match = re.search(r'\[(Aさん|Bさん)\]', script)
+        if first_speaker_match:
+            removed_prefix = script[:first_speaker_match.start()]
+            if removed_prefix.strip():
+                logger.info(f"   メタ情報を除去: {len(removed_prefix)}文字")
+                logger.debug(f"   除去内容: {removed_prefix[:100]}...")
+            script = script[first_speaker_match.start():]
+        
         chunks = []
         chunk_id = 0
         
