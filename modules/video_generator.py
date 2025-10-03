@@ -331,7 +331,7 @@ class VideoGenerator:
             bg_start_y = 300  # 画面の上から300pxの位置から黒背景開始
             overlay_draw.rectangle(
                 [(0, bg_start_y), (1280, 720)],
-                fill=(0, 0, 0, 200)  # 黒、透過度約78%
+                fill=(0, 0, 0, 150)  # 黒、透過度約60%（より薄く）
             )
             
             # オーバーレイを合成
