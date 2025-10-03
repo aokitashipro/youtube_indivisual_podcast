@@ -267,3 +267,255 @@ class VideoGenerator:
         except Exception as e:
             logger.error(f"動画エフェクトの適用に失敗しました: {e}")
             raise
+    
+    def _create_subtitle_frame(self, text: str, width: int = 1920, height: int = 1080) -> Image.Image:
+        """
+        字幕フレームを生成（PIL Image）
+        
+        Args:
+            text: 字幕テキスト
+            width: 画像の幅
+            height: 画像の高さ
+            
+        Returns:
+            PIL Image: 字幕付きの透明画像
+        """
+        try:
+            # 透明な画像を作成
+            img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            
+            # フォント設定 - Noto Sans JP Mediumを使用
+            font_size = 60  # 40px → 60pxに拡大
+            font_path = "assets/fonts/Noto_Sans_JP/static/NotoSansJP-Medium.ttf"
+            
+            try:
+                if os.path.exists(font_path):
+                    font = ImageFont.truetype(font_path, font_size)
+                    logger.info(f"✅ フォント読み込み成功: {font_path}")
+                elif os.path.exists(self.font_path):
+                    font = ImageFont.truetype(self.font_path, font_size)
+                    logger.info(f"✅ フォント読み込み成功: {self.font_path}")
+                else:
+                    # デフォルトフォント
+                    font = ImageFont.load_default()
+                    logger.warning(f"⚠️ フォントファイルが見つかりません、デフォルトフォントを使用")
+            except Exception as e:
+                logger.warning(f"⚠️ フォント読み込みエラー: {e}、デフォルトフォントを使用")
+                font = ImageFont.load_default()
+            
+            # テキストのサイズを計算（日本語対応の複数行処理）
+            lines = []
+            max_width = width - 300  # 左右の余白を十分に確保（150pxずつ）
+            
+            # 日本語対応の自動改行処理
+            current_line = ""
+            for i, char in enumerate(text):
+                test_line = current_line + char
+                bbox = draw.textbbox((0, 0), test_line, font=font)
+                test_width = bbox[2] - bbox[0]
+                
+                if test_width <= max_width:
+                    current_line = test_line
+                else:
+                    # 現在の行を保存
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = char
+                
+                # 句読点の後で改行を推奨（ただし行が長くなりすぎない場合）
+                if char in ['、', '。', '！', '？'] and i < len(text) - 1:
+                    # 次の文字を含めても幅が収まるかチェック
+                    if i + 1 < len(text):
+                        next_test = current_line + text[i + 1]
+                        bbox = draw.textbbox((0, 0), next_test, font=font)
+                        next_width = bbox[2] - bbox[0]
+                        
+                        # 次の文字を含めると幅が80%以上になる場合は改行
+                        if next_width > max_width * 0.75:
+                            lines.append(current_line)
+                            current_line = ""
+            
+            # 最後の行を追加
+            if current_line:
+                lines.append(current_line)
+            
+            # 3行を超える場合は警告
+            if len(lines) > 3:
+                logger.warning(f"⚠️ 字幕が3行を超えています（{len(lines)}行）。最初の3行のみ表示します。")
+                lines = lines[:3]
+            
+            # 字幕背景の黒帯を描画（画面下部いっぱいに）
+            # 3行分のスペースを常に確保
+            padding_x = 80  # 左右のパディング
+            padding_y = 45  # 上下のパディング（少し広めに）
+            line_height = 75  # 行間（3行が綺麗に表示できるように）
+            max_lines = 3  # 最大3行
+            
+            # 3行分の固定高さを計算
+            bg_height = (line_height * max_lines) + (padding_y * 2)
+            bg_y = height - bg_height  # 画面下部に固定
+            
+            # 黒背景（半透明）- 画面の底まで
+            draw.rectangle(
+                [(0, bg_y), (width, height)],  # 下部いっぱいまで
+                fill=(0, 0, 0, 200)  # 透過度を少し上げて読みやすく
+            )
+            
+            # テキストを中央に描画（縦方向も中央揃え）
+            total_text_height = len(lines) * line_height
+            # 3行分のスペースの中でテキストを中央配置
+            available_height = bg_height - (padding_y * 2)
+            start_y = bg_y + padding_y + ((available_height - total_text_height) // 2)
+            
+            for i, line in enumerate(lines):
+                bbox = draw.textbbox((0, 0), line, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_x = (width - text_width) // 2
+                text_y = start_y + (i * line_height)
+                
+                # 白文字で描画（より明るく）
+                draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255, 255))
+            
+            return img
+            
+        except Exception as e:
+            logger.error(f"字幕フレーム生成に失敗: {e}")
+            raise
+    
+    async def generate_video_with_subtitles(
+        self,
+        audio_path: str,
+        subtitle_data: List[Dict[str, Any]],
+        background_image_path: str = None
+    ) -> str:
+        """
+        字幕付き動画を生成
+        
+        Args:
+            audio_path: 音声ファイルのパス
+            subtitle_data: 字幕データのリスト
+                [
+                    {
+                        "start": float,  # 開始時間（秒）
+                        "end": float,    # 終了時間（秒）
+                        "text": str,     # 字幕テキスト
+                        "speaker": str   # 話者（オプション）
+                    }
+                ]
+            background_image_path: 背景画像のパス（Noneの場合は設定値を使用）
+            
+        Returns:
+            str: 生成された動画ファイルのパス
+        """
+        try:
+            logger.info("字幕付き動画生成を開始します")
+            
+            # 音声ファイルを読み込み
+            audio_clip = AudioFileClip(audio_path)
+            duration = audio_clip.duration
+            logger.info(f"音声の長さ: {duration:.2f}秒")
+            
+            # 背景画像を読み込み
+            bg_path = background_image_path if background_image_path else self.background_path
+            
+            if not os.path.exists(bg_path):
+                logger.warning(f"背景画像が見つかりません: {bg_path}、黒背景を使用")
+                background_clip = ColorClip(
+                    size=(self.settings.VIDEO_WIDTH, self.settings.VIDEO_HEIGHT),
+                    color=(0, 0, 0),
+                    duration=duration
+                )
+            else:
+                # Pillowで画像を読み込んでリサイズ（MoviePyのバグ回避）
+                from PIL import Image as PILImage
+                pil_img = PILImage.open(bg_path)
+                
+                # 目標サイズにリサイズ
+                target_size = (self.settings.VIDEO_WIDTH, self.settings.VIDEO_HEIGHT)
+                if pil_img.size != target_size:
+                    # Pillow 10.0.0以降では LANCZOS を使用
+                    pil_img = pil_img.resize(target_size, PILImage.LANCZOS)
+                    logger.info(f"背景画像をリサイズしました: {pil_img.size}")
+                
+                # 一時ファイルに保存
+                temp_dir = Path(self.settings.TEMP_DIR)
+                temp_dir.mkdir(exist_ok=True)
+                temp_bg_path = temp_dir / "resized_background.png"
+                pil_img.save(temp_bg_path)
+                
+                # リサイズ済み画像を読み込み
+                background_clip = ImageClip(str(temp_bg_path), duration=duration)
+                logger.info(f"背景画像を読み込みました: {bg_path}")
+            
+            # 字幕クリップを作成
+            subtitle_clips = []
+            for i, subtitle in enumerate(subtitle_data):
+                start_time = subtitle.get("start", 0)
+                end_time = subtitle.get("end", start_time + 3)
+                text = subtitle.get("text", "")
+                
+                if not text:
+                    continue
+                
+                # 字幕フレームを生成
+                subtitle_img = self._create_subtitle_frame(
+                    text,
+                    self.settings.VIDEO_WIDTH,
+                    self.settings.VIDEO_HEIGHT
+                )
+                
+                # 一時ファイルに保存
+                temp_dir = Path(self.settings.TEMP_DIR)
+                temp_dir.mkdir(exist_ok=True)
+                temp_subtitle_path = temp_dir / f"subtitle_{i}.png"
+                subtitle_img.save(temp_subtitle_path)
+                
+                # 字幕クリップを作成
+                subtitle_clip = (ImageClip(str(temp_subtitle_path))
+                               .set_start(start_time)
+                               .set_duration(end_time - start_time)
+                               .set_position(("center", "center")))
+                
+                subtitle_clips.append(subtitle_clip)
+                logger.info(f"字幕 {i+1}/{len(subtitle_data)}: {start_time:.2f}s - {end_time:.2f}s")
+            
+            # 動画を合成
+            logger.info("動画を合成中...")
+            video_clip = CompositeVideoClip([background_clip] + subtitle_clips)
+            video_clip = video_clip.set_audio(audio_clip)
+            
+            # ファイルパスを生成
+            video_filename = f"video_with_subtitles_{self._generate_timestamp()}.mp4"
+            video_path = self.output_dir / video_filename
+            
+            # 動画を出力
+            logger.info("動画をエンコード中...")
+            video_clip.write_videofile(
+                str(video_path),
+                fps=self.settings.VIDEO_FPS,
+                codec='libx264',
+                audio_codec='aac',
+                preset='medium',
+                threads=4
+            )
+            
+            # 一時ファイルを削除
+            for i in range(len(subtitle_data)):
+                temp_subtitle_path = temp_dir / f"subtitle_{i}.png"
+                if temp_subtitle_path.exists():
+                    temp_subtitle_path.unlink()
+            
+            # リソースを解放
+            audio_clip.close()
+            video_clip.close()
+            background_clip.close()
+            for clip in subtitle_clips:
+                clip.close()
+            
+            logger.info(f"✅ 字幕付き動画を生成しました: {video_path}")
+            return str(video_path)
+            
+        except Exception as e:
+            logger.error(f"字幕付き動画生成に失敗しました: {e}")
+            raise
