@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from config.settings import Settings
 from modules.gemini_audio_generator import GeminiAudioGenerator
 from modules.video_generator import VideoGenerator
+from modules.subtitle_generator import SubtitleGenerator
 
 
 async def generate_test_audio(audio_generator, script_data):
@@ -56,7 +57,25 @@ async def generate_test_audio(audio_generator, script_data):
         raise
 
 
-async def generate_test_video(video_generator, audio_path, subtitles, background_path):
+async def generate_test_subtitles(subtitle_generator, audio_path, script_data):
+    """テスト用の字幕を生成"""
+    logger.info("=" * 80)
+    logger.info("💬 字幕データを生成中（ElevenLabs STT）...")
+    logger.info("=" * 80)
+    
+    try:
+        subtitle_data = await subtitle_generator.generate_subtitles(
+            audio_path=audio_path,
+            script_content=script_data
+        )
+        logger.info(f"✅ 字幕生成完了: {subtitle_data['total_count']}個のセグメント")
+        return subtitle_data
+    except Exception as e:
+        logger.error(f"❌ 字幕生成エラー: {e}")
+        raise
+
+
+async def generate_test_video(video_generator, audio_path, subtitle_data, background_path):
     """テスト用の動画を生成"""
     logger.info("=" * 80)
     logger.info("🎬 字幕付き動画を生成中...")
@@ -65,7 +84,7 @@ async def generate_test_video(video_generator, audio_path, subtitles, background
     try:
         video_path = await video_generator.generate_video_with_subtitles(
             audio_path=audio_path,
-            subtitle_data=subtitles,
+            subtitle_data=subtitle_data['subtitles'],
             background_image_path=background_path
         )
         logger.info(f"✅ 動画生成完了: {video_path}")
@@ -87,6 +106,7 @@ async def main():
         
         # モジュールを初期化
         audio_generator = GeminiAudioGenerator(settings)
+        subtitle_generator = SubtitleGenerator(settings)
         video_generator = VideoGenerator(settings)
         
         # 背景画像のパスを設定
@@ -130,34 +150,6 @@ async def main():
             "full_script": full_script.strip()
         }
         
-        # 字幕データ（手動で設定）- 3行のテストも含む
-        subtitles = [
-            {
-                "start": 0.0,
-                "end": 3.5,
-                "text": "こんにちは、今日は個人開発について話します。",
-                "speaker": "A"
-            },
-            {
-                "start": 3.8,
-                "end": 6.5,
-                "text": "面白そうですね、どんな内容ですか？",
-                "speaker": "B"
-            },
-            {
-                "start": 6.8,
-                "end": 10.5,
-                "text": "ニューヨーク連邦準備銀行が2025年2月13日に発表した詳細なレポートによると、プライム層の60日延滞率が0.39%と、前年同期の0.35%から上昇しています。",
-                "speaker": "A"
-            },
-            {
-                "start": 10.8,
-                "end": 13.0,
-                "text": "それは画期的ですね！",
-                "speaker": "B"
-            }
-        ]
-        
         logger.info("📝 テスト台本:")
         for item in dialogue_list:
             logger.info(f"  {item['speaker']}: {item['text']}")
@@ -173,11 +165,18 @@ async def main():
         audio_size = os.path.getsize(audio_path) / 1024
         logger.info(f"📊 音声ファイルサイズ: {audio_size:.1f}KB")
         
-        # ステップ2: 動画生成
+        # ステップ2: 字幕生成（ElevenLabs STT）
+        subtitle_data = await generate_test_subtitles(
+            subtitle_generator,
+            audio_path,
+            script_data
+        )
+        
+        # ステップ3: 動画生成
         video_path = await generate_test_video(
             video_generator,
             audio_path,
-            subtitles,
+            subtitle_data,
             background_path
         )
         
