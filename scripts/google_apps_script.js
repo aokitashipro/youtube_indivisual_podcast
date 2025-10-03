@@ -3,9 +3,25 @@
  * 
  * このスクリプトは以下の機能を提供します：
  * 1. 新しい実行ログ行の自動作成
- * 2. プロンプトのバージョン管理
+ * 2. メタデータとサムネイルの管理
  * 3. 統計情報の自動計算
  * 4. データ検証とエラーチェック
+ * 
+ * 列構成（v2.0 - メタデータ・サムネイル対応）:
+ * A: 実行日時
+ * B: タイトル
+ * C: 説明文（最初の500文字）
+ * D: タグ
+ * E: サムネイルテキスト
+ * F: コメント（毒舌設定）
+ * G: 動画パス
+ * H: 音声パス
+ * I: サムネイルパス
+ * J: 処理時間
+ * K: ステータス
+ * L: 動画URL（Drive）
+ * M: 音声URL（Drive）
+ * N: サムネイルURL（Drive）
  */
 
 // ============================================================================
@@ -13,10 +29,26 @@
 // ============================================================================
 
 const CONFIG = {
-  MAIN_SHEET_NAME: '実行ログ',
-  PROMPT_SHEET_NAME: 'プロンプト管理',
+  MAIN_SHEET_NAME: '動画生成ログ',
   STATS_SHEET_NAME: '統計情報',
-  TIMEZONE: 'Asia/Tokyo'
+  TIMEZONE: 'Asia/Tokyo',
+  // 列インデックス
+  COL: {
+    EXECUTION_TIME: 1,   // A
+    TITLE: 2,            // B
+    DESCRIPTION: 3,      // C
+    TAGS: 4,             // D
+    THUMBNAIL_TEXT: 5,   // E
+    COMMENT: 6,          // F
+    VIDEO_PATH: 7,       // G
+    AUDIO_PATH: 8,       // H
+    THUMBNAIL_PATH: 9,   // I
+    PROCESSING_TIME: 10, // J
+    STATUS: 11,          // K
+    VIDEO_URL: 12,       // L
+    AUDIO_URL: 13,       // M
+    THUMBNAIL_URL: 14    // N
+  }
 };
 
 // ============================================================================
@@ -32,7 +64,7 @@ function onOpen() {
     .addItem('📝 新しい実行ログを作成', 'createNewExecutionLog')
     .addSeparator()
     .addItem('📊 統計情報を更新', 'updateStatistics')
-    .addItem('🔍 プロンプト使用回数を更新', 'updatePromptUsageCount')
+    .addItem('🎨 サムネイルテキスト一覧', 'showThumbnailTexts')
     .addSeparator()
     .addItem('✅ データ検証', 'validateData')
     .addItem('🧹 古いログをアーカイブ', 'archiveOldLogs')
@@ -44,7 +76,7 @@ function onOpen() {
 // ============================================================================
 
 /**
- * 新しい実行ログ行を作成
+ * 新しい実行ログ行を作成（v2.0 - メタデータ対応）
  */
 function createNewExecutionLog() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -55,64 +87,113 @@ function createNewExecutionLog() {
     return;
   }
   
-  // 実行IDを生成（日付 + 連番）
+  // ヘッダーが存在しない場合は作成
+  if (sheet.getLastRow() === 0) {
+    initializeSheet(sheet);
+  }
+  
+  // 実行日時
   const now = new Date();
-  const dateStr = Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyyMMdd');
-  const lastRow = sheet.getLastRow();
-  const sequenceNum = String(lastRow).padStart(3, '0');
-  const executionId = `${dateStr}_${sequenceNum}`;
+  const timestamp = Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
   
-  // プロンプトを取得
-  const promptSheet = ss.getSheetByName(CONFIG.PROMPT_SHEET_NAME);
-  const infoCollectPrompt = getActivePrompt(promptSheet, 'INFO_COLLECT');
-  const scriptGeneratePrompt = getActivePrompt(promptSheet, 'SCRIPT_GENERATE');
-  
-  // 新しい行を追加
+  // 新しい行を追加（v2.0構造）
   const newRow = [
-    executionId,                                                    // A: 実行ID
-    Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss'), // B: 実行日時
-    '処理中',                                                        // C: ステータス
-    infoCollectPrompt,                                              // D: プロンプトA
-    '',                                                             // E: 検索結果
-    scriptGeneratePrompt,                                           // F: プロンプトB
-    '',                                                             // G: 生成台本
-    '',                                                             // H: 音声URL
-    '',                                                             // I: 動画URL
-    '',                                                             // J: 処理時間
-    ''                                                              // K: 備考
+    timestamp,      // A: 実行日時
+    '',             // B: タイトル
+    '',             // C: 説明文
+    '',             // D: タグ
+    '',             // E: サムネイルテキスト
+    '',             // F: コメント
+    '',             // G: 動画パス
+    '',             // H: 音声パス
+    '',             // I: サムネイルパス
+    '',             // J: 処理時間
+    '処理中',       // K: ステータス
+    '',             // L: 動画URL
+    '',             // M: 音声URL
+    ''              // N: サムネイルURL
   ];
   
   sheet.appendRow(newRow);
   
   // セルの書式設定
   const lastRowNum = sheet.getLastRow();
-  sheet.getRange(lastRowNum, 3).setBackground('#fff4cc'); // ステータスを黄色に
+  sheet.getRange(lastRowNum, CONFIG.COL.STATUS).setBackground('#fff4cc'); // ステータスを黄色に
   
-  SpreadsheetApp.getUi().alert(`✅ 新しい実行ログを作成しました\n実行ID: ${executionId}`);
+  SpreadsheetApp.getUi().alert(`✅ 新しい実行ログを作成しました\n行番号: ${lastRowNum}`);
   
-  Logger.log(`新しい実行ログを作成: ${executionId}`);
+  Logger.log(`新しい実行ログを作成: 行${lastRowNum}`);
+  
+  return lastRowNum;
 }
 
 /**
- * 有効なプロンプトを取得
+ * シートを初期化（ヘッダーを作成）
  */
-function getActivePrompt(promptSheet, promptType) {
-  if (!promptSheet) return '';
+function initializeSheet(sheet) {
+  const headers = [
+    '実行日時',
+    'タイトル',
+    '説明文',
+    'タグ',
+    'サムネイルテキスト',
+    'コメント',
+    '動画パス',
+    '音声パス',
+    'サムネイルパス',
+    '処理時間',
+    'ステータス',
+    '動画URL',
+    '音声URL',
+    'サムネイルURL'
+  ];
   
-  const data = promptSheet.getDataRange().getValues();
+  sheet.appendRow(headers);
   
-  // ヘッダー行をスキップして検索
+  // ヘッダーの書式設定
+  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange.setFontWeight('bold')
+    .setBackground('#4a86e8')
+    .setFontColor('#ffffff')
+    .setHorizontalAlignment('center');
+  
+  // 列幅を自動調整
+  sheet.autoResizeColumns(1, headers.length);
+  
+  Logger.log('シートを初期化しました');
+}
+
+/**
+ * サムネイルテキスト一覧を表示
+ */
+function showThumbnailTexts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.MAIN_SHEET_NAME);
+  
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert('エラー: 「実行ログ」シートが見つかりません');
+    return;
+  }
+  
+  const data = sheet.getDataRange().getValues();
+  const thumbnails = [];
+  
   for (let i = 1; i < data.length; i++) {
-    const promptId = data[i][0];      // A列: プロンプトID
-    const promptContent = data[i][5]; // F列: プロンプト内容
-    const status = data[i][10];       // K列: 有効/無効
+    const timestamp = data[i][CONFIG.COL.EXECUTION_TIME - 1];
+    const thumbnailText = data[i][CONFIG.COL.THUMBNAIL_TEXT - 1];
+    const status = data[i][CONFIG.COL.STATUS - 1];
     
-    if (promptId.includes(promptType) && status === '有効') {
-      return promptContent;
+    if (thumbnailText && status === '完了') {
+      thumbnails.push(`${i + 1}行目: ${thumbnailText} (${timestamp})`);
     }
   }
   
-  return '';
+  if (thumbnails.length === 0) {
+    SpreadsheetApp.getUi().alert('サムネイルテキストが見つかりません');
+  } else {
+    const message = `📋 サムネイルテキスト一覧 (${thumbnails.length}件):\n\n` + thumbnails.slice(0, 10).join('\n');
+    SpreadsheetApp.getUi().alert(message);
+  }
 }
 
 /**
@@ -155,74 +236,30 @@ function updateExecutionStatus(executionId, status, notes = '') {
 // ============================================================================
 
 /**
- * プロンプトの使用回数を更新
+ * 実行ステータスを更新
  */
-function updatePromptUsageCount() {
+function updateExecutionStatus(rowNumber, status, notes = '') {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const mainSheet = ss.getSheetByName(CONFIG.MAIN_SHEET_NAME);
-  const promptSheet = ss.getSheetByName(CONFIG.PROMPT_SHEET_NAME);
+  const sheet = ss.getSheetByName(CONFIG.MAIN_SHEET_NAME);
   
-  if (!mainSheet || !promptSheet) {
-    SpreadsheetApp.getUi().alert('エラー: 必要なシートが見つかりません');
-    return;
+  if (!sheet) return false;
+  
+  sheet.getRange(rowNumber, CONFIG.COL.STATUS).setValue(status);
+  
+  // ステータスに応じて背景色を変更
+  if (status === '完了') {
+    sheet.getRange(rowNumber, CONFIG.COL.STATUS).setBackground('#d9ead3');
+  } else if (status === 'エラー') {
+    sheet.getRange(rowNumber, CONFIG.COL.STATUS).setBackground('#f4cccc');
   }
   
-  // 各プロンプトの使用回数をカウント
-  const mainData = mainSheet.getDataRange().getValues();
-  const promptData = promptSheet.getDataRange().getValues();
-  
-  const usageCount = {};
-  
-  // 実行ログから使用されたプロンプトをカウント
-  for (let i = 1; i < mainData.length; i++) {
-    const promptA = mainData[i][3]; // D列: プロンプトA
-    const promptB = mainData[i][5]; // F列: プロンプトB
-    
-    if (promptA) {
-      usageCount[promptA] = (usageCount[promptA] || 0) + 1;
-    }
-    if (promptB) {
-      usageCount[promptB] = (usageCount[promptB] || 0) + 1;
-    }
+  // 備考を追加（ステータス列の隣）
+  if (notes) {
+    sheet.getRange(rowNumber, CONFIG.COL.STATUS + 1).setValue(notes);
   }
   
-  // プロンプトシートの使用回数を更新
-  for (let i = 1; i < promptData.length; i++) {
-    const promptContent = promptData[i][5]; // F列: プロンプト内容
-    const count = usageCount[promptContent] || 0;
-    promptSheet.getRange(i + 1, 7).setValue(count); // G列: 使用回数
-  }
-  
-  SpreadsheetApp.getUi().alert('✅ プロンプト使用回数を更新しました');
-}
-
-/**
- * プロンプトの成功率を計算
- */
-function calculatePromptSuccessRate(promptContent) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const mainSheet = ss.getSheetByName(CONFIG.MAIN_SHEET_NAME);
-  
-  if (!mainSheet) return 0;
-  
-  const data = mainSheet.getDataRange().getValues();
-  let totalCount = 0;
-  let successCount = 0;
-  
-  for (let i = 1; i < data.length; i++) {
-    const promptA = data[i][3]; // D列: プロンプトA
-    const promptB = data[i][5]; // F列: プロンプトB
-    const status = data[i][2];  // C列: ステータス
-    
-    if (promptA === promptContent || promptB === promptContent) {
-      totalCount++;
-      if (status === '完了') {
-        successCount++;
-      }
-    }
-  }
-  
-  return totalCount > 0 ? (successCount / totalCount * 100).toFixed(1) : 0;
+  Logger.log(`ステータスを更新: 行${rowNumber} -> ${status}`);
+  return true;
 }
 
 // ============================================================================
@@ -276,9 +313,9 @@ function updateStatistics() {
   let processedCount = 0;
   
   for (let i = 1; i < mainData.length; i++) {
-    const status = mainData[i][2];          // C列: ステータス
-    const executionTime = mainData[i][1];   // B列: 実行日時
-    const processingTime = mainData[i][9];  // J列: 処理時間
+    const status = mainData[i][CONFIG.COL.STATUS - 1];            // K列: ステータス
+    const executionTime = mainData[i][CONFIG.COL.EXECUTION_TIME - 1];  // A列: 実行日時
+    const processingTime = mainData[i][CONFIG.COL.PROCESSING_TIME - 1]; // J列: 処理時間
     
     // ステータスのカウント
     if (status === '完了') stats['成功回数']++;
@@ -329,13 +366,12 @@ function updateStatistics() {
     row++;
   }
   
-  // プロンプト統計
-  if (promptSheet) {
-    const promptData = promptSheet.getDataRange().getValues();
-    statsSheet.getRange(row, 1).setValue('アクティブプロンプト数');
-    statsSheet.getRange(row, 2).setValue(promptData.filter((r, i) => i > 0 && r[10] === '有効').length);
-    statsSheet.getRange(row, 3).setValue(now);
-  }
+  // サムネイル統計
+  row++;
+  const thumbnailCount = mainData.filter((r, i) => i > 0 && r[CONFIG.COL.THUMBNAIL_TEXT - 1]).length;
+  statsSheet.getRange(row, 1).setValue('サムネイル生成数');
+  statsSheet.getRange(row, 2).setValue(thumbnailCount);
+  statsSheet.getRange(row, 3).setValue(now);
   
   // 列幅を自動調整
   statsSheet.autoResizeColumns(1, 3);
@@ -402,14 +438,13 @@ function validateData() {
   const errors = [];
   
   for (let i = 1; i < data.length; i++) {
-    const executionId = data[i][0];
-    const status = data[i][2];
-    const promptA = data[i][3];
-    const promptB = data[i][5];
+    const timestamp = data[i][CONFIG.COL.EXECUTION_TIME - 1];
+    const title = data[i][CONFIG.COL.TITLE - 1];
+    const status = data[i][CONFIG.COL.STATUS - 1];
     
-    // 実行IDが空
-    if (!executionId) {
-      errors.push(`行${i + 1}: 実行IDが空です`);
+    // 実行日時が空
+    if (!timestamp) {
+      errors.push(`行${i + 1}: 実行日時が空です`);
     }
     
     // ステータスが不正
@@ -417,9 +452,9 @@ function validateData() {
       errors.push(`行${i + 1}: ステータスが不正です (${status})`);
     }
     
-    // プロンプトが空
-    if (!promptA && !promptB) {
-      errors.push(`行${i + 1}: プロンプトが空です`);
+    // 完了しているのにタイトルが空
+    if (status === '完了' && !title) {
+      errors.push(`行${i + 1}: 完了しているのにタイトルが空です`);
     }
   }
   
@@ -583,7 +618,67 @@ function doPost(e) {
     const params = JSON.parse(e.postData.contents);
     const action = params.action;
     
-    if (action === 'create_log') {
+    if (action === 'save_metadata') {
+      // メタデータを保存（v2.0構造）
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const sheet = ss.getSheetByName(CONFIG.MAIN_SHEET_NAME);
+      
+      if (!sheet) {
+        return ContentService.createTextOutput(
+          JSON.stringify({success: false, error: '実行ログシートが見つかりません'})
+        ).setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      // ヘッダーが存在しない場合は作成
+      if (sheet.getLastRow() === 0) {
+        initializeSheet(sheet);
+      }
+      
+      const now = new Date();
+      const timestamp = Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+      
+      const metadata = params.metadata || {};
+      const comment = params.comment || '';
+      const videoPath = params.video_path || '';
+      const audioPath = params.audio_path || '';
+      const thumbnailPath = params.thumbnail_path || '';
+      const processingTime = params.processing_time || '';
+      
+      // 新しい行を追加
+      const newRow = [
+        timestamp,                                  // A: 実行日時
+        metadata.title || '',                       // B: タイトル
+        (metadata.description || '').substring(0, 500), // C: 説明文（500文字まで）
+        (metadata.tags || []).join(', '),          // D: タグ
+        metadata.thumbnail_text || '',              // E: サムネイルテキスト
+        comment,                                    // F: コメント
+        videoPath,                                  // G: 動画パス
+        audioPath,                                  // H: 音声パス
+        thumbnailPath,                              // I: サムネイルパス
+        processingTime,                             // J: 処理時間
+        '完了',                                     // K: ステータス
+        '',                                         // L: 動画URL
+        '',                                         // M: 音声URL
+        ''                                          // N: サムネイルURL
+      ];
+      
+      sheet.appendRow(newRow);
+      const rowNumber = sheet.getLastRow();
+      
+      // ステータスセルに背景色を設定
+      sheet.getRange(rowNumber, CONFIG.COL.STATUS).setBackground('#d9ead3');
+      
+      Logger.log(`メタデータを保存: 行${rowNumber}`);
+      
+      return ContentService.createTextOutput(
+        JSON.stringify({
+          success: true,
+          row_number: rowNumber,
+          message: 'メタデータを保存しました'
+        })
+      ).setMimeType(ContentService.MimeType.JSON);
+      
+    } else if (action === 'create_log') {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       const sheet = ss.getSheetByName(CONFIG.MAIN_SHEET_NAME);
       
