@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     
     # 背景画像設定
     BACKGROUND_IMAGE_PATH: str = Field(
-        default="assets/background.png",
+        default="assets/images/background.png",
         env="BACKGROUND_IMAGE_PATH"
     )
     

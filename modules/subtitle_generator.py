@@ -91,6 +91,9 @@ class SubtitleGenerator:
                 original_script
             )
             
+            # 3行を超える字幕を分割
+            subtitles = self._split_long_subtitles(subtitles)
+            
             # タイミングオフセットを適用
             if time_offset != 0.0:
                 logger.info(f"⏰ タイミングオフセットを適用: {time_offset:+.2f}秒")
@@ -346,6 +349,13 @@ class SubtitleGenerator:
         
         # [Aさん] または [Bさん] で分割
         import re
+        
+        # メタ情報（タイトル、文字数など）を除去
+        # 最初の[Aさん]または[Bさん]が出現するまでの部分をスキップ
+        first_speaker_match = re.search(r'\[(Aさん|Bさん)\]', script)
+        if first_speaker_match:
+            script = script[first_speaker_match.start():]
+        
         pattern = r'\[(Aさん|Bさん)\]\s*'
         parts = re.split(pattern, script)
         
@@ -354,10 +364,13 @@ class SubtitleGenerator:
             if part in ['Aさん', 'Bさん']:
                 current_speaker = 'A' if part == 'Aさん' else 'B'
             elif current_speaker and part.strip():
-                segments.append({
-                    "speaker": current_speaker,
-                    "text": part.strip()
-                })
+                # 句読点のみのセグメントを除外（最低5文字以上）
+                text = part.strip()
+                if len(text) >= 5:
+                    segments.append({
+                        "speaker": current_speaker,
+                        "text": text
+                    })
         
         return segments
     
@@ -389,6 +402,115 @@ class SubtitleGenerator:
             })
         
         return subtitles
+    
+    def _split_long_subtitles(self, subtitles: List[Dict[str, Any]], max_lines: int = 3) -> List[Dict[str, Any]]:
+        """
+        3行を超える字幕を自動分割
+        
+        Args:
+            subtitles: 字幕データのリスト
+            max_lines: 1セグメントの最大行数（デフォルト: 3）
+            
+        Returns:
+            分割後の字幕データのリスト
+        """
+        from PIL import Image, ImageDraw, ImageFont
+        import os
+        
+        # フォントを読み込み
+        font_size = 60
+        font_path = "assets/fonts/Noto_Sans_JP/static/NotoSansJP-Medium.ttf"
+        try:
+            if os.path.exists(font_path):
+                font = ImageFont.truetype(font_path, font_size)
+            else:
+                font = ImageFont.load_default()
+        except:
+            font = ImageFont.load_default()
+        
+        new_subtitles = []
+        img = Image.new('RGBA', (1920, 1080), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        max_width = 1920 - 300  # 字幕の最大幅
+        
+        for subtitle in subtitles:
+            text = subtitle['text']
+            
+            # 改行ロジックで実際の行数を計算
+            lines = []
+            current_line = ""
+            
+            for i, char in enumerate(text):
+                test_line = current_line + char
+                bbox = draw.textbbox((0, 0), test_line, font=font)
+                test_width = bbox[2] - bbox[0]
+                
+                if test_width <= max_width:
+                    current_line = test_line
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = char
+                
+                # 句読点で改行を促進
+                if char in ['、', '。', '！', '？'] and i < len(text) - 1:
+                    if i + 1 < len(text):
+                        next_test = current_line + text[i + 1]
+                        bbox = draw.textbbox((0, 0), next_test, font=font)
+                        next_width = bbox[2] - bbox[0]
+                        
+                        if next_width > max_width * 0.75:
+                            lines.append(current_line)
+                            current_line = ""
+            
+            if current_line:
+                lines.append(current_line)
+            
+            # 3行以下ならそのまま追加
+            if len(lines) <= max_lines:
+                new_subtitles.append(subtitle)
+            else:
+                # 3行ごとに分割
+                logger.info(f"📝 長い字幕を分割: {len(lines)}行 → {(len(lines) + max_lines - 1) // max_lines}セグメント")
+                
+                duration = subtitle['end'] - subtitle['start']
+                chars_per_line = [len(line) for line in lines]
+                total_chars = sum(chars_per_line)
+                
+                segments_count = (len(lines) + max_lines - 1) // max_lines
+                
+                for seg_idx in range(segments_count):
+                    start_line_idx = seg_idx * max_lines
+                    end_line_idx = min(start_line_idx + max_lines, len(lines))
+                    
+                    segment_lines = lines[start_line_idx:end_line_idx]
+                    segment_text = ''.join(segment_lines)
+                    
+                    # タイムスタンプを文字数で比例配分
+                    segment_chars = sum(chars_per_line[start_line_idx:end_line_idx])
+                    char_ratio = segment_chars / total_chars
+                    
+                    segment_duration = duration * char_ratio
+                    
+                    # 前のセグメントの終了時刻から開始
+                    if seg_idx == 0:
+                        segment_start = subtitle['start']
+                    else:
+                        segment_start = new_subtitles[-1]['end']
+                    
+                    segment_end = segment_start + segment_duration
+                    
+                    new_subtitles.append({
+                        "start": segment_start,
+                        "end": segment_end,
+                        "text": segment_text,
+                        "speaker": subtitle.get('speaker', '')
+                    })
+                    
+                    logger.info(f"   セグメント{seg_idx + 1}/{segments_count}: {segment_text[:30]}... ({len(segment_lines)}行, {segment_duration:.2f}秒)")
+        
+        logger.info(f"🔄 字幕分割完了: {len(subtitles)}セグメント → {len(new_subtitles)}セグメント")
+        return new_subtitles
     
     def _create_simple_subtitles(self, script: str) -> List[Dict[str, Any]]:
         """
