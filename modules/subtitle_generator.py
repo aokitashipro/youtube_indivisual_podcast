@@ -29,7 +29,8 @@ class SubtitleGenerator:
     async def generate_subtitles(
         self,
         audio_path: str,
-        script_content: Dict[str, Any]
+        script_content: Dict[str, Any],
+        time_offset: float = 0.0
     ) -> Dict[str, Any]:
         """
         音声から字幕データを生成（STT + マッチング）
@@ -38,10 +39,14 @@ class SubtitleGenerator:
         1. ElevenLabs STTで音声→テキスト変換（タイムスタンプ付き）
         2. 元の台本テキストとマッチング
         3. タイムスタンプ + 正確なテキストを組み合わせ
+        4. タイミングオフセットを適用
         
         Args:
             audio_path: 音声ファイルのパス
             script_content: 台本データ（full_scriptを含む）
+            time_offset: 字幕のタイミング調整（秒）
+                        正の値: 字幕を遅らせる（音声に対して字幕が早い場合）
+                        負の値: 字幕を早める（音声に対して字幕が遅い場合）
             
         Returns:
             字幕データ
@@ -85,6 +90,13 @@ class SubtitleGenerator:
                 transcription_data,
                 original_script
             )
+            
+            # タイミングオフセットを適用
+            if time_offset != 0.0:
+                logger.info(f"⏰ タイミングオフセットを適用: {time_offset:+.2f}秒")
+                for subtitle in subtitles:
+                    subtitle['start'] = max(0, subtitle['start'] + time_offset)
+                    subtitle['end'] = max(0, subtitle['end'] + time_offset)
             
             result = {
                 "subtitles": subtitles,
@@ -281,7 +293,7 @@ class SubtitleGenerator:
                 word_index += 1
                 
                 # セグメントの文字数に達したら終了
-                if char_count >= len(segment_chars) * 0.9:
+                if char_count >= len(segment_chars):
                     break
             
             # 終了時刻が開始時刻より小さい場合は調整

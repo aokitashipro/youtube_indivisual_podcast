@@ -85,7 +85,7 @@ class ClaudeClient:
             
             # Claude APIを呼び出し
             response = self.client.messages.create(
-                model="claude-3-sonnet-20240229",
+                model="claude-sonnet-4-5-20250929",
                 max_tokens=4000,
                 temperature=0.7,
                 messages=[
@@ -171,7 +171,7 @@ class ClaudeClient:
             prompt = prompt_template.format(content=content)
             
             response = self.client.messages.create(
-                model="claude-3-sonnet-20240229",
+                model="claude-sonnet-4-5-20250929",
                 max_tokens=2000,
                 temperature=0.5,
                 messages=[
@@ -232,7 +232,7 @@ class ClaudeClient:
             )
             
             response = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",  # Sonnet 3.5使用（コスト削減）
+                model="claude-sonnet-4-5-20250929",  # Sonnet 3.5使用（コスト削減）
                 max_tokens=2000,
                 temperature=0.7,
                 messages=[
@@ -289,7 +289,7 @@ class ClaudeClient:
             prompt = prompt_template.format(script_content=script_text[:1000])
             
             response = self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-5-20250929",
                 max_tokens=500,
                 temperature=0.8,  # 創造性を高める
                 messages=[

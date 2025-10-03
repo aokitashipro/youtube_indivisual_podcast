@@ -15,8 +15,8 @@
 | 5 | 音声生成 | 5-10分 | ✅ 実装済み |
 | 6 | 字幕生成 | 1-2分 | ✅ 実装済み |
 | 7 | 動画生成 | 3-5分 | ✅ 実装済み |
-| 8 | メタデータ生成 | 1分 | 📝 要実装 |
-| 9 | サムネイル生成 | 1分 | 📝 要実装 |
+| 8 | メタデータ生成 | 1分 | ✅ 実装済み |
+| 9 | サムネイル生成 | 1分 | ✅ 実装済み |
 | 10 | Driveアップロード | 2-3分 | 📝 要実装 |
 | 11 | 結果記録 | - | 📝 要実装 |
 | 12 | 完了通知 | - | 📝 要実装 |
@@ -654,7 +654,91 @@ async def generate_video_with_subtitles(
 
 ---
 
-## 📝 ステップ8-12
+## ✅ ステップ8: メタデータ生成
+
+### 📍 実装場所
+- `main.py` → `PodcastPipeline.step_08_generate_metadata()`
+
+### 📂 参照ファイル
+
+#### 必須
+```
+modules/claude_client.py
+├── generate_youtube_metadata(script_content, topics_data) -> Dict
+│   ├── Claude APIでメタデータ生成
+│   ├── タイトル（70文字以内、SEO最適化）
+│   ├── 説明文（概要+要約+出典URL）
+│   ├── タグ（15個以内）
+│   └── サムネイル用テキスト（16文字以内）
+├── generate_comment(script_content) -> str
+│   └── 毒舌コメント生成（100-200文字）
+└── 依存: anthropic, Claude API
+
+config/prompts.yaml
+├── youtube_metadata_prompt
+└── comment_generation_prompt
+```
+
+### 🔧 実装内容
+- Claude APIでYouTube用メタデータを自動生成
+- タイトル、説明文、タグ、サムネイルテキスト
+- 毒舌コメントも同時生成
+- 結果を `self.results["metadata"]` と `self.results["comment"]` に保存
+
+### ✅ 実装状態
+**✅ 実装済み** - `modules/claude_client.py` にメタデータ生成機能完了
+- Claude 3.5 Sonnet使用
+- SEO最適化されたタイトル生成
+- 構造化された説明文
+- 関連性の高いタグ
+
+---
+
+## ✅ ステップ9: サムネイル生成
+
+### 📍 実装場所
+- `main.py` → `PodcastPipeline.step_09_generate_thumbnail()`
+
+### 📂 参照ファイル
+
+#### 必須
+```
+modules/video_generator.py
+├── generate_thumbnail(metadata, background_path, save_json) -> str
+│   ├── PIL（Pillow）で画像生成
+│   ├── 1280x720（YouTube標準）
+│   ├── 背景画像リサイズ
+│   ├── 半透明黒背景（透過度60%）
+│   ├── テキストオーバーレイ（NotoSansJP-Bold, 140px）
+│   └── JSON保存（編集可能）
+└── 依存: Pillow
+
+assets/fonts/Noto_Sans_JP/static/NotoSansJP-Bold.ttf
+└── サムネイル用フォント
+
+assets/images/background.png
+└── 背景画像（1920x1080）
+```
+
+### 🔧 実装内容
+- YouTube標準サイズ（1280x720）のサムネイル生成
+- 背景画像の自動リサイズ
+- 半透明黒背景（画面下半分）
+- テキストオーバーレイ（中央揃え、自動改行）
+- JSON保存で後から編集可能
+- 結果を `self.results["thumbnail_path"]` に保存
+
+### ✅ 実装状態
+**✅ 実装済み** - `modules/video_generator.py` にサムネイル生成機能完了
+- フォント: NotoSansJP-Bold, 140px
+- 配置: 画面下部（Y=340px〜）
+- 行数: 最大2行、1行8文字程度
+- 黒背景: Y=300-720px、透過度60%
+- JSON保存機能（`regenerate_thumbnail.py`で再生成可能）
+
+---
+
+## 📝 ステップ10-12
 
 残りのステップについては `IMPLEMENTATION_GUIDE.md` を参照してください。
 
