@@ -13,8 +13,8 @@
 | 3 | 情報収集 | 2-3分 | ✅ 実装済み |
 | 4 | 台本生成 | 2-3分 | ✅ 実装済み |
 | 5 | 音声生成 | 5-10分 | ✅ 実装済み |
-| 6 | 字幕生成 | 1-2分 | 📝 要実装 |
-| 7 | 動画生成 | 3-5分 | 📝 要実装 |
+| 6 | 字幕生成 | 1-2分 | ✅ 実装済み |
+| 7 | 動画生成 | 3-5分 | ✅ 実装済み |
 | 8 | メタデータ生成 | 1分 | 📝 要実装 |
 | 9 | サムネイル生成 | 1分 | 📝 要実装 |
 | 10 | Driveアップロード | 2-3分 | 📝 要実装 |
@@ -526,11 +526,11 @@ async def generate_subtitles(
 - 結果を `self.results["subtitle_data"]` に保存
 
 ### 📝 実装状態
-**未実装** - `IMPLEMENTATION_GUIDE.md` 参照
+**✅ 実装済み** - `modules/subtitle_generator.py` にElevenLabs STT統合完了
 
 ---
 
-## 📝 ステップ7: 動画生成（MoviePy）
+## ✅ ステップ7: 動画生成（MoviePy）
 
 ### 📍 実装場所
 - `main.py` → `PodcastPipeline.step_07_generate_video()`（要追加）
@@ -646,8 +646,11 @@ async def generate_video_with_subtitles(
 - 1920x1080, 30fps
 - 字幕: 下部中央（Y=900）、フォントサイズ40px、黒背景（透過70%）
 
-### 📝 実装状態
-**未実装** - `IMPLEMENTATION_GUIDE.md` 参照
+### ✅ 実装状態
+**✅ 実装済み** - `modules/video_generator.py` に字幕付き動画生成機能完了
+- 背景画像 + 音声 + 字幕の合成
+- 日本語フォント対応（NotoSansJP-Medium, 60px）
+- 3行表示対応、自動改行機能
 
 ---
 

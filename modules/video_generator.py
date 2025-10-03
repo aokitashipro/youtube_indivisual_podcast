@@ -4,6 +4,7 @@
 from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 import os
+import json
 from pathlib import Path
 from typing import Dict, Any, List
 import logging
@@ -237,6 +238,255 @@ class VideoGenerator:
         """タイムスタンプを生成"""
         from datetime import datetime
         return datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    async def generate_thumbnail(
+        self,
+        metadata: Dict[str, Any],
+        thumbnail_text: str = None,
+        background_path: str = None,
+        save_json: bool = True
+    ) -> str:
+        """
+        サムネイル画像を生成
+        
+        Args:
+            metadata: メタデータ（titleとthumbnail_textを含む）
+            thumbnail_text: サムネイル用テキスト（指定があればこちらを優先）
+            background_path: 背景画像のパス（Noneの場合は設定値を使用）
+            save_json: JSONファイルとして保存するか
+            
+        Returns:
+            生成されたサムネイルファイルのパス
+        """
+        try:
+            logger.info("🎨 サムネイル画像を生成中...")
+            
+            # 背景画像のパスを決定
+            bg_path = background_path if background_path else self.background_path
+            if not bg_path:
+                bg_path = "assets/images/background.png"
+            
+            # サムネイル用テキストを取得
+            if thumbnail_text:
+                text = thumbnail_text
+            elif metadata.get('thumbnail_text'):
+                text = metadata['thumbnail_text']
+            elif metadata.get('title'):
+                text = metadata['title']
+            else:
+                text = "YouTube AI Podcast"
+            
+            logger.info(f"   テキスト: {text}")
+            
+            # サムネイル画像を生成
+            from PIL import Image as PILImage
+            
+            # 背景画像を読み込み（1280x720 YouTubeサムネイルサイズ）
+            if os.path.exists(bg_path):
+                img = PILImage.open(bg_path)
+                # サムネイルサイズにリサイズ
+                img = img.resize((1280, 720), PILImage.LANCZOS)
+            else:
+                # 背景がない場合は黒背景
+                img = PILImage.new('RGB', (1280, 720), color=(0, 0, 0))
+                logger.warning(f"⚠️ 背景画像が見つかりません: {bg_path}")
+            
+            # 描画オブジェクトを作成
+            draw = ImageDraw.Draw(img)
+            
+            # フォントを設定（太字で大きく）- 元記事のように大きく表示
+            font_size = 140  # 80px → 140pxに拡大（画面の半分くらいの高さ）
+            font_path = "assets/fonts/Noto_Sans_JP/static/NotoSansJP-Bold.ttf"
+            
+            try:
+                if os.path.exists(font_path):
+                    font = ImageFont.truetype(font_path, font_size)
+                    logger.info(f"✅ フォント読み込み: {font_path}")
+                elif os.path.exists(self.font_path):
+                    font = ImageFont.truetype(self.font_path, font_size)
+                else:
+                    font = ImageFont.load_default()
+                    logger.warning("⚠️ デフォルトフォントを使用")
+            except Exception as e:
+                logger.warning(f"⚠️ フォント読み込みエラー: {e}")
+                font = ImageFont.load_default()
+            
+            # テキストを自動改行（最大2行、1行8文字程度）
+            max_chars_per_line = 8  # 元記事のように1行8文字程度
+            lines = self._wrap_text_for_thumbnail_by_chars(text, max_chars_per_line, max_lines=2)
+            
+            # テキストの総高さを計算
+            line_height = 160  # 大きなフォントに合わせて行間を広げる
+            
+            # 画面下部全体に黒背景を描画（元画像と同じように）
+            # RGBAモードに変換して透過を使用
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            
+            # 黒背景のオーバーレイを作成
+            overlay = PILImage.new('RGBA', img.size, (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            
+            # 画面下半分に黒の半透明背景を描画
+            bg_start_y = 300  # 画面の上から300pxの位置から黒背景開始
+            overlay_draw.rectangle(
+                [(0, bg_start_y), (1280, 720)],
+                fill=(0, 0, 0, 200)  # 黒、透過度約78%
+            )
+            
+            # オーバーレイを合成
+            img = PILImage.alpha_composite(img, overlay)
+            
+            # 新しいdrawオブジェクトを作成
+            draw = ImageDraw.Draw(img)
+            
+            # テキストを下部に配置
+            start_y = 340  # 380pxから40px上げる
+            
+            # 各行を描画
+            for i, line in enumerate(lines):
+                # テキストのサイズを取得
+                bbox = draw.textbbox((0, 0), line, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                
+                # 中央に配置
+                text_x = (1280 - text_width) // 2
+                text_y = start_y + (i * line_height)
+                
+                # テキストを描画（白文字、背景なし）
+                draw.text((text_x, text_y), line, font=font, fill=(255, 255, 255, 255))
+            
+            # ファイル名を生成
+            timestamp = self._generate_timestamp()
+            thumbnail_filename = f"thumbnail_{timestamp}.png"
+            thumbnail_path = self.output_dir / thumbnail_filename
+            
+            # 保存
+            img.save(thumbnail_path, 'PNG', quality=95)
+            
+            # JSON保存（再生成用）
+            if save_json:
+                json_data = {
+                    "text": text,
+                    "title": metadata.get('title', ''),
+                    "created_at": timestamp,
+                    "thumbnail_path": str(thumbnail_path),
+                    "background_path": bg_path,
+                    "editable": True
+                }
+                json_path = self.output_dir / f"thumbnail_{timestamp}.json"
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(json_data, f, ensure_ascii=False, indent=2)
+                logger.info(f"📄 サムネイル設定を保存: {json_path}")
+            
+            logger.info(f"✅ サムネイル生成完了: {thumbnail_path}")
+            return str(thumbnail_path)
+            
+        except Exception as e:
+            logger.error(f"❌ サムネイル生成エラー: {e}")
+            raise
+    
+    def _wrap_text_for_thumbnail_by_chars(
+        self,
+        text: str,
+        max_chars_per_line: int = 8,
+        max_lines: int = 2
+    ) -> List[str]:
+        """
+        サムネイル用にテキストを文字数で折り返し
+        
+        Args:
+            text: テキスト
+            max_chars_per_line: 1行の最大文字数
+            max_lines: 最大行数
+            
+        Returns:
+            折り返されたテキストの行リスト
+        """
+        lines = []
+        current_line = ""
+        
+        # 改行コードを削除してテキストをクリーンアップ
+        text = text.replace('\n', '').replace('\r', '')
+        
+        for i, char in enumerate(text):
+            # 句読点や記号を除外して文字数をカウント
+            if char not in ['、', '。', '！', '？', '…', '～', ' ', '　']:
+                current_line += char
+                
+                # 文字数が上限に達したら改行
+                if len(current_line) >= max_chars_per_line:
+                    lines.append(current_line)
+                    current_line = ""
+                    
+                    if len(lines) >= max_lines:
+                        break
+            else:
+                # 句読点は前の行に追加（ただし行がある場合のみ）
+                if char not in [' ', '　']:  # スペースは無視
+                    if lines and not current_line:
+                        lines[-1] += char
+                    else:
+                        current_line += char
+        
+        # 最後の行を追加
+        if current_line and len(lines) < max_lines:
+            lines.append(current_line)
+        
+        # 行が少ない場合は警告
+        if not lines:
+            lines = [text[:max_chars_per_line * max_lines]]
+        
+        logger.info(f"📝 サムネイルテキスト: {len(lines)}行（各{max_chars_per_line}文字）")
+        for i, line in enumerate(lines):
+            logger.info(f"   {i+1}行目: {line}")
+        
+        return lines
+    
+    def _wrap_text_for_thumbnail(
+        self,
+        text: str,
+        font,
+        draw,
+        max_width: int,
+        max_lines: int = 2
+    ) -> List[str]:
+        """
+        サムネイル用にテキストを折り返し（幅ベース）
+        
+        Args:
+            text: テキスト
+            font: フォント
+            draw: Drawオブジェクト
+            max_width: 最大幅
+            max_lines: 最大行数
+            
+        Returns:
+            折り返されたテキストの行リスト
+        """
+        lines = []
+        current_line = ""
+        
+        for i, char in enumerate(text):
+            test_line = current_line + char
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            test_width = bbox[2] - bbox[0]
+            
+            if test_width <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                    if len(lines) >= max_lines:
+                        break
+                current_line = char
+        
+        # 最後の行を追加
+        if current_line and len(lines) < max_lines:
+            lines.append(current_line)
+        
+        return lines
     
     async def generate_video_with_effects(self, audio_path: str, content: Dict[str, Any], 
                                         effects: Dict[str, Any] = None) -> str:

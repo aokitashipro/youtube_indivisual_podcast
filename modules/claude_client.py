@@ -192,6 +192,186 @@ class ClaudeClient:
             logger.error(f"メタデータ生成に失敗しました: {e}")
             raise
     
+    async def generate_youtube_metadata(
+        self,
+        script_content: Dict[str, Any],
+        topics_data: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        YouTube用のメタデータを生成
+        
+        Args:
+            script_content: 台本データ
+            topics_data: トピック情報（オプション）
+            
+        Returns:
+            メタデータ
+            {
+                "title": str,
+                "description": str,
+                "tags": List[str],
+                "thumbnail_text": str
+            }
+        """
+        try:
+            logger.info("📋 YouTube用メタデータを生成中...")
+            
+            prompt_template = self.prompts.get("youtube_metadata_prompt", "")
+            
+            # 台本テキストを取得
+            script_text = script_content.get("full_script", "")
+            if not script_text:
+                script_text = str(script_content)
+            
+            # トピック情報を整形
+            topics_text = json.dumps(topics_data, ensure_ascii=False, indent=2) if topics_data else "トピック情報なし"
+            
+            prompt = prompt_template.format(
+                script_content=script_text[:2000],  # 長すぎる場合は省略
+                topics_data=topics_text[:1000]
+            )
+            
+            response = self.client.messages.create(
+                model="claude-3-5-sonnet-20241022",  # Sonnet 3.5使用（コスト削減）
+                max_tokens=2000,
+                temperature=0.7,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            metadata_text = response.content[0].text
+            
+            # JSON形式で返ってくることを期待
+            try:
+                # JSONブロックを抽出
+                import re
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', metadata_text, re.DOTALL)
+                if json_match:
+                    metadata = json.loads(json_match.group(1))
+                else:
+                    # JSON形式でない場合はパース
+                    metadata = self._parse_metadata_text(metadata_text)
+            except Exception as e:
+                logger.warning(f"⚠️ JSONパースエラー: {e}, テキストパースを試行")
+                metadata = self._parse_metadata_text(metadata_text)
+            
+            logger.info(f"✅ メタデータ生成完了:")
+            logger.info(f"   - タイトル: {metadata.get('title', 'N/A')[:50]}...")
+            logger.info(f"   - タグ数: {len(metadata.get('tags', []))}")
+            logger.info(f"   - サムネイルテキスト: {metadata.get('thumbnail_text', 'N/A')}")
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f"❌ YouTube用メタデータ生成エラー: {e}")
+            raise
+    
+    async def generate_comment(self, script_content: Dict[str, Any]) -> str:
+        """
+        動画用コメントを生成（毒舌の女の子設定）
+        
+        Args:
+            script_content: 台本データ
+            
+        Returns:
+            コメントテキスト
+        """
+        try:
+            logger.info("💬 コメントを生成中（毒舌設定）...")
+            
+            prompt_template = self.prompts.get("comment_generation_prompt", "")
+            
+            script_text = script_content.get("full_script", str(script_content))
+            prompt = prompt_template.format(script_content=script_text[:1000])
+            
+            response = self.client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=500,
+                temperature=0.8,  # 創造性を高める
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            comment = response.content[0].text.strip()
+            
+            logger.info(f"✅ コメント生成完了: {comment[:50]}...")
+            return comment
+            
+        except Exception as e:
+            logger.error(f"❌ コメント生成エラー: {e}")
+            return "面白い内容でした！"
+    
+    def _parse_metadata_text(self, text: str) -> Dict[str, Any]:
+        """
+        テキスト形式のメタデータをパース
+        
+        Args:
+            text: メタデータテキスト
+            
+        Returns:
+            パースされたメタデータ
+        """
+        metadata = {
+            "title": "",
+            "description": "",
+            "tags": [],
+            "thumbnail_text": ""
+        }
+        
+        lines = text.split('\n')
+        current_section = None
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # セクション判定
+            if 'タイトル' in line or 'title' in line.lower():
+                current_section = 'title'
+                # タイトルが同じ行にある場合
+                if ':' in line:
+                    metadata['title'] = line.split(':', 1)[1].strip().strip('"')
+            elif '説明' in line or 'description' in line.lower():
+                current_section = 'description'
+            elif 'タグ' in line or 'tags' in line.lower():
+                current_section = 'tags'
+            elif 'サムネイル' in line or 'thumbnail' in line.lower():
+                current_section = 'thumbnail'
+                if ':' in line:
+                    metadata['thumbnail_text'] = line.split(':', 1)[1].strip().strip('"')
+            else:
+                # データを追加
+                if current_section == 'title' and not metadata['title']:
+                    metadata['title'] = line.strip('"').strip('-').strip()
+                elif current_section == 'description':
+                    metadata['description'] += line + '\n'
+                elif current_section == 'tags':
+                    # カンマ区切り or 箇条書き
+                    if ',' in line:
+                        tags = [t.strip().strip('"') for t in line.split(',')]
+                        metadata['tags'].extend(tags)
+                    elif line.startswith('-') or line.startswith('•'):
+                        tag = line.lstrip('-•').strip().strip('"')
+                        if tag:
+                            metadata['tags'].append(tag)
+                elif current_section == 'thumbnail' and not metadata['thumbnail_text']:
+                    metadata['thumbnail_text'] = line.strip('"').strip('-').strip()
+        
+        # クリーンアップ
+        metadata['description'] = metadata['description'].strip()
+        metadata['tags'] = [t for t in metadata['tags'] if t][:15]  # 15個まで
+        
+        return metadata
+    
     def _parse_metadata(self, content: str) -> Dict[str, Any]:
         """メタデータを解析"""
         try:
