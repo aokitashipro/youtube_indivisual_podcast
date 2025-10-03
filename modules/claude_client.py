@@ -456,8 +456,8 @@ class ClaudeClient:
                 topics_data = self._get_mock_topics()
                 logger.info(f"📥 モックデータ取得完了: {len(topics_data.get('topics', []))}件のトピック")
             else:
-                logger.info("🔍 Claude APIで情報収集を開始します（注意: リアルタイムWeb検索機能は存在しません）")
-                logger.warning("⚠️ Claude APIはリアルタイムWeb検索ができません。空のデータが返される可能性があります。")
+                logger.info("🔍 Claude API Extended Tools（Web検索）で最新情報を収集します")
+                logger.info("🌐 Indie Hackers, Product Hunt, Hacker Newsから情報を取得中...")
                 
                 prompt = """
 あなたは海外の個人開発・AI関連ニュースを収集する専門家です。
@@ -516,10 +516,17 @@ class ClaudeClient:
 }
 """
                 
+                # Extended Tools: Web検索を有効化（2025年3月5日版）
                 response = self.client.messages.create(
                     model="claude-sonnet-4-5-20250929",
                     max_tokens=4000,
                     temperature=0.7,
+                    tools=[
+                        {
+                            "type": "web_search_20250305",
+                            "name": "web_search"
+                        }
+                    ],
                     messages=[
                         {
                             "role": "user",
@@ -528,9 +535,38 @@ class ClaudeClient:
                     ]
                 )
                 
-                # レスポンスを解析
-                content = response.content[0].text
-                topics_data = self._parse_topics_response(content)
+                # レスポンスを解析（ツール使用の場合とテキストの場合を処理）
+                logger.info(f"📊 レスポンスブロック数: {len(response.content)}")
+                logger.info(f"📊 最初のブロック型: {type(response.content[0])}")
+                
+                # 全てのcontentブロックからテキストを抽出
+                final_text = ""
+                tool_used = False
+                
+                for i, block in enumerate(response.content):
+                    block_type = getattr(block, 'type', 'unknown')
+                    logger.info(f"   ブロック{i+1}: {block_type}")
+                    
+                    if block_type == 'tool_use':
+                        tool_used = True
+                        tool_name = getattr(block, 'name', 'unknown')
+                        logger.info(f"   🔧 ツール使用: {tool_name}")
+                    elif block_type == 'text':
+                        text_content = getattr(block, 'text', '')
+                        final_text += text_content
+                        logger.info(f"   📝 テキスト取得: {len(text_content)}文字")
+                
+                if tool_used:
+                    logger.info("✅ Web検索が実行されました")
+                
+                if not final_text:
+                    # テキストがない場合はモックデータを使用
+                    logger.warning("⚠️ レスポンスにテキストが含まれていません")
+                    logger.info("📝 モックデータを使用します")
+                    topics_data = self._get_mock_topics()
+                else:
+                    logger.info(f"📄 取得したテキスト: {len(final_text)}文字")
+                    topics_data = self._parse_topics_response(final_text)
                 
                 logger.info(f"📥 情報収集完了: {len(topics_data.get('topics', []))}件のトピック")
             
